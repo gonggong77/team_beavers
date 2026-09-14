@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.pyc
+models/*.pt
+models/*.onnx
+data/events.db
+data/snapshots/
+.venv/
+/290.이안류 CCTV 데이터
+/이안류 CCTV 데이터

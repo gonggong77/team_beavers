@@ -1,0 +1,14 @@
+# 팀 전체가 같은 버전을 써야 모델 로딩이 깨지지 않습니다.
+# 모델팀의 `pip freeze | grep -i ultralytics` 결과를 받아 아래 줄을 정확히 맞춘 뒤
+# 이 파일을 팀 공용으로 확정하세요.
+
+streamlit>=1.50            # width="stretch" 사용. 1.62에서 st.cache가 제거되었으니 옛 코드 복붙 주의
+opencv-python-headless>=4.9
+numpy>=1.26
+pandas>=2.0
+requests>=2.31
+python-dotenv>=1.0
+
+# 모델을 받은 뒤에 주석을 풀고, 모델팀과 동일한 버전으로 고정하세요.
+# YOLO11로 학습했다면 보통 8.3.x 계열입니다.
+# ultralytics==8.3.0
