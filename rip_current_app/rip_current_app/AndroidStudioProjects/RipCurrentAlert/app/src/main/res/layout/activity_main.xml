@@ -1,0 +1,158 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/rootLayout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="#FFFFFF">
+
+    <LinearLayout
+        android:id="@+id/bandTop"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:background="#D6202A"
+        android:paddingStart="14dp"
+        android:paddingEnd="14dp"
+        android:paddingTop="12dp"
+        android:paddingBottom="12dp">
+
+        <TextView
+            android:id="@+id/tvRiskCode"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="EMERGENCY"
+            android:textSize="18sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:letterSpacing="0.08" />
+
+        <TextView
+            android:id="@+id/tvCounters"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="in-zone 4 │ total 4 │ zones 1"
+            android:textSize="15sp"
+            android:textColor="#FFFFFF" />
+
+        <TextView
+            android:id="@+id/tvClock"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="2dp"
+            android:text="--:--:--"
+            android:textSize="15sp"
+            android:textColor="#FFFFFF" />
+
+    </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/cctvFrame"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#000000">
+
+        <ImageView
+            android:id="@+id/ivCctv"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:scaleType="matrix"
+            android:contentDescription="CCTV 화면" />
+
+        <TextView
+            android:id="@+id/tvCctvHint"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:text="CCTV 영상 대기 중"
+            android:textSize="14sp"
+            android:textColor="#888888" />
+
+    </FrameLayout>
+
+    <TextView
+        android:id="@+id/tvUpdated"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:paddingTop="8dp"
+        android:paddingBottom="4dp"
+        android:text="최근 갱신 --:--:-- · 0.7초 주기"
+        android:textSize="12sp"
+        android:textColor="#777777" />
+
+    <LinearLayout
+        android:id="@+id/bandRisk"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:gravity="center_horizontal"
+        android:background="#D6202A"
+        android:layout_marginStart="12dp"
+        android:layout_marginEnd="12dp"
+        android:layout_marginBottom="10dp"
+        android:paddingTop="14dp"
+        android:paddingBottom="14dp">
+
+        <TextView
+            android:id="@+id/tvRiskLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🚨 긴급"
+            android:textSize="58sp"
+            android:textStyle="bold"
+            android:textColor="#FFFFFF"
+            android:letterSpacing="0.06"
+            android:maxLines="1" />
+
+        <TextView
+            android:id="@+id/tvRiskDesc"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="구역 안에 인원 감지"
+            android:textSize="14sp"
+            android:textColor="#FFFFFF" />
+
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvZone"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:background="#E2E2E2"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
+        android:text="해운대 해수욕장 3번 망루 앞"
+        android:textSize="15sp"
+        android:textColor="#222222" />
+
+    <TextView
+        android:id="@+id/tvCamera"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:background="#EFEFEF"
+        android:paddingTop="10dp"
+        android:paddingBottom="10dp"
+        android:text="CCTV-E01"
+        android:textSize="15sp"
+        android:textColor="#222222" />
+
+    <TextView
+        android:id="@+id/tvSafety"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:background="#FFFFFF"
+        android:paddingTop="6dp"
+        android:paddingBottom="6dp"
+        android:text="AI 참고용 탐지 결과입니다. 현장 안전요원의 확인이 필요합니다."
+        android:textSize="10sp"
+        android:textColor="#999999" />
+
+</LinearLayout>

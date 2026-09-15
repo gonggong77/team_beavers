@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "428923466650",
+    "project_id": "rip-current-alert",
+    "storage_bucket": "rip-current-alert.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:428923466650:android:f8aace633112bcee13c023",
+        "android_client_info": {
+          "package_name": "com.example.ripcurrentalert"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD7AW-WD7xFzuXlGrIkkX_OsG0S4NaDO9k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
