@@ -71,7 +71,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         )
 
         val builder = NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setSmallIcon(R.drawable.ic_notification_alert)
             .setContentTitle(title)
             .setContentText(body)
             .setAutoCancel(true)
@@ -82,6 +82,10 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             .setColorized(true)
 
         // 고정 ID 로 알림을 덮어써서 최신 경보 하나만 남긴다.
+        // 다만 같은 ID 로 그냥 다시 notify 하면 안드로이드가 '업데이트'로 처리해
+        // 헤즈업 배너도 소리도 다시 울리지 않는다. 경보는 매번 새로 알려야 하므로
+        // 먼저 지우고 새 알림으로 올린다.
+        notificationManager.cancel(NOTIFY_ID)
         notificationManager.notify(NOTIFY_ID, builder.build())
         Log.d("FCM_CHECK", "🔔 알림 배너 생성 완료")
     }

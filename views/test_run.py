@@ -69,9 +69,9 @@ def render(uploaded, detector, store: EventStore, settings: dict) -> None:
 
 def _analyze(viewer, panel, video_path: Path, detector, store: EventStore, settings: dict) -> None:
     notifier = build_notifier(settings["notifier_kind"])
-    if settings["notifier_kind"] == "telegram" and not getattr(notifier, "configured", False):
+    if not getattr(notifier, "configured", True):
         with panel:
-            st.warning("텔레그램 토큰이 설정되지 않아 발송이 실패합니다. .env를 확인해 주세요.")
+            st.warning(notifier.setup_hint)
 
     config = PipelineConfig(
         rip_ids=settings["rip_ids"],

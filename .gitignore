@@ -8,3 +8,5 @@ data/snapshots/
 .venv/
 /290.이안류 CCTV 데이터
 /이안류 CCTV 데이터
+rip_current_app/rip_current_app/serviceAccountKey.json
+/backup

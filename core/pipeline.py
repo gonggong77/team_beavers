@@ -131,7 +131,7 @@ def _cli() -> None:
     parser.add_argument("--weights", default=None)
     parser.add_argument("--skip", type=int, default=5)
     parser.add_argument("--max-frames", type=int, default=None)
-    parser.add_argument("--notifier", default="console", choices=["console", "telegram"])
+    parser.add_argument("--notifier", default="console", choices=["console", "telegram", "fcm"])
     args = parser.parse_args()
 
     detector, is_real = build_detector(args.weights)

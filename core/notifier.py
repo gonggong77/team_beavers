@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 from core.schemas import AlertEvent
@@ -35,6 +36,7 @@ class ConsoleNotifier:
     """알림 서버 없이 웹을 테스트할 때 쓰는 기본 구현."""
 
     name = "console"
+    setup_hint = ""
 
     def send(self, event: AlertEvent) -> SendResult:
         print("=" * 60)
@@ -50,6 +52,7 @@ class TelegramNotifier:
     """
 
     name = "telegram"
+    setup_hint = "텔레그램 토큰이 설정되지 않아 발송이 실패합니다. .env를 확인해 주세요."
 
     def __init__(self, bot_token: str | None = None, chat_id: str | None = None, timeout: float = 10.0):
         self.bot_token = bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -91,8 +94,78 @@ class TelegramNotifier:
             return SendResult(ok=False, detail=f"{type(exc).__name__}: {exc}")
 
 
+class FcmNotifier:
+    """안드로이드 앱으로 FCM 토픽 경보 발송. 스냅샷은 Firebase Storage에 올려 서명 URL로 전달한다.
+
+    카메라 위치 정보는 탐지 결과가 아니라 배포 설정이라 AlertEvent에는 없다.
+    생성자 인자로 받거나 env(RIP_ALERT_*)에서 읽는다.
+    """
+
+    name = "fcm"
+    setup_hint = "Firebase 서비스 계정 키가 없어 발송이 실패합니다. serviceAccountKey.json 위치를 확인해 주세요."
+
+    def __init__(
+        self,
+        location_name: str | None = None,
+        latitude: float | None = None,
+        longitude: float | None = None,
+        camera_id: str | None = None,
+    ):
+        self.location_name = location_name or os.getenv("RIP_ALERT_LOCATION", "해운대 해수욕장")
+        self.latitude = latitude if latitude is not None else float(os.getenv("RIP_ALERT_LAT", "35.1587"))
+        self.longitude = longitude if longitude is not None else float(os.getenv("RIP_ALERT_LON", "129.1604"))
+        self.camera_id = camera_id or os.getenv("RIP_ALERT_CAMERA_ID", "CCTV-E01")
+
+    @property
+    def configured(self) -> bool:
+        from core.fcm_alert import SERVICE_ACCOUNT_PATH
+
+        return SERVICE_ACCOUNT_PATH.exists()
+
+    def send(self, event: AlertEvent) -> SendResult:
+        if not self.configured:
+            return SendResult(ok=False, detail=self.setup_hint)
+
+        from core.fcm_alert import send_rip_current_alert, upload_snapshot
+
+        image_url = ""
+        upload_error = ""
+        if event.snapshot_path and os.path.exists(event.snapshot_path):
+            try:
+                image_url = upload_snapshot(event.snapshot_path)
+            except Exception as exc:  # 업로드 실패가 경보 발송 자체를 막으면 안 된다
+                upload_error = f" (이미지 업로드 실패: {type(exc).__name__}: {exc})"
+
+        try:
+            detected_at = datetime.fromisoformat(event.occurred_at).strftime("%H:%M:%S")
+        except ValueError:
+            detected_at = datetime.now().strftime("%H:%M:%S")
+
+        try:
+            message_id = send_rip_current_alert(
+                location_name=self.location_name,
+                person_count=event.total_persons,
+                latitude=self.latitude,
+                longitude=self.longitude,
+                image_url=image_url,
+                risk_level=event.risk_level,
+                persons_in_rip=event.persons_in_rip,
+                total_persons=event.total_persons,
+                rip_count=event.rip_count,
+                camera_id=self.camera_id,
+                detected_at=detected_at,
+            )
+            return SendResult(ok=True, detail=f"sent ({message_id}){upload_error}")
+        except Exception as exc:  # 알림 실패가 영상 분석을 멈추면 안 된다
+            return SendResult(ok=False, detail=f"{type(exc).__name__}: {exc}{upload_error}")
+
+
 def build_notifier(kind: str = "console") -> Notifier:
-    return TelegramNotifier() if kind == "telegram" else ConsoleNotifier()
+    if kind == "telegram":
+        return TelegramNotifier()
+    if kind == "fcm":
+        return FcmNotifier()
+    return ConsoleNotifier()
 
 
 if __name__ == "__main__":

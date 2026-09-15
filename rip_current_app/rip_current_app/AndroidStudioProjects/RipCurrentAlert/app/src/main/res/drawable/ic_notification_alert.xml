@@ -1,0 +1,14 @@
+<!--
+  상태바 아이콘은 알파 실루엣으로만 그려진다. 색이 들어간 런처 아이콘을
+  쓰면 형체를 알아볼 수 없는 얼룩으로 보이므로 단색 경고 표지를 따로 둔다.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#FFFFFFFF">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M1,21h22L12,2 1,21zM13,18h-2v-2h2v2zM13,14h-2v-4h2v4z" />
+</vector>

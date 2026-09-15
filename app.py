@@ -168,8 +168,8 @@ def sidebar() -> tuple[dict, object]:
 
     with st.sidebar.expander("알림 설정"):
         notifier_kind = st.selectbox(
-            "발송 방식", ["console", "telegram"],
-            format_func={"console": "화면 기록만", "telegram": "텔레그램"}.get,
+            "발송 방식", ["console", "telegram", "fcm"],
+            format_func={"console": "화면 기록만", "telegram": "텔레그램", "fcm": "안드로이드 앱(FCM)"}.get,
         )
         min_consecutive = st.slider("연속 긴급 판정 횟수", 1, 10, 3)
         cooldown_sec = st.slider("재발송 금지 시간(초)", 0, 120, 30, 5)
