@@ -100,6 +100,12 @@ class AlertEvent:
     timestamp_sec: float
     video_source: str
     snapshot_path: str = ""
+    # "auto" = 긴급 연속 판정, "escalation" = 구역 내 인원이 직전 발송보다 늘어남.
+    # 필드명을 trigger 로 두면 안 된다 — EventStore 가 키를 그대로 컬럼명에 쓰는데
+    # TRIGGER 는 SQLite 예약어라 INSERT 구문이 깨진다.
+    trigger_kind: str = "auto"
+    # 발송 시 Storage 에 올라간 스냅샷의 서명 URL. 폰이 받은 것과 같은 값이다.
+    image_url: str = ""
     event_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     occurred_at: str = field(default_factory=lambda: datetime.now().astimezone().isoformat(timespec="seconds"))
     note: str = SAFETY_NOTE

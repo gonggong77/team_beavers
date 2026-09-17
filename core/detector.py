@@ -1,8 +1,12 @@
 """모델 어댑터.
 
 웹 코드는 Detector 프로토콜만 알고 있으면 된다.
-모델 파일이 없으면 FakeDetector, 있으면 YoloDetector가 자동으로 선택된다.
-모델을 받으면 models/ 폴더에 넣고 .env의 RIP_MODEL_PATH만 바꾸면 끝난다.
+모델은 이안류 탐지 모델(segment)과 사람(표류자) 탐지 모델(detect), 두 개를 따로 돌려
+DualDetector가 결과를 합친다. 한쪽 모델 파일이 없으면 그 쪽만 FakeDetector로 대체된다.
+
+이안류 모델은 models/rip/ (또는 .env의 RIP_MODEL_PATH)에,
+사람 모델은 models/person/ (또는 .env의 PERSON_MODEL_PATH)에 넣으면 끝난다.
+기존처럼 models/ 바로 아래에 이안류 모델을 둔 경우도 계속 인식한다.
 """
 
 from __future__ import annotations
@@ -15,10 +19,14 @@ from typing import Protocol, Sequence, runtime_checkable
 
 import numpy as np
 
+from core.model_probe import PERSON_HINTS, RIP_HINTS, match_class_ids, matches_hint
 from core.rules import mark_persons_in_rip
 from core.schemas import FrameResult, PersonBox, RipRegion
 
-DEFAULT_CONF = 0.25
+# 이안류 구역과 원거리 CCTV의 작은 사람은 적정 conf 임계값이 서로 다르므로
+# 모델별로 따로 둔다 (한 값을 공유하면 한쪽이 반드시 손해를 본다).
+DEFAULT_RIP_CONF = 0.003
+DEFAULT_PERSON_CONF = 0.25
 DEFAULT_IOU = 0.7
 DEFAULT_IMGSZ = 640
 
@@ -112,7 +120,7 @@ class YoloDetector:
     def __init__(
         self,
         weights: str | Path,
-        conf: float = DEFAULT_CONF,
+        conf: float = DEFAULT_RIP_CONF,
         iou: float = DEFAULT_IOU,
         imgsz: int = DEFAULT_IMGSZ,
         device: str | None = None,
@@ -151,9 +159,13 @@ class YoloDetector:
             for i, cls_id in enumerate(classes):
                 if cls_id in rip_set:
                     poly = polygons[i] if i < len(polygons) else None
-                    if poly is None or len(poly) < 3:
-                        continue  # seg 모델이 아니면 이안류 구역을 만들 수 없다
-                    rips.append(RipRegion(polygon=[tuple(p) for p in np.asarray(poly).tolist()], conf=float(confs[i])))
+                    if poly is not None and len(poly) >= 3:
+                        points = [tuple(p) for p in np.asarray(poly).tolist()]
+                    else:
+                        # detect(박스) 전용 모델은 마스크가 없으므로 박스를 사각형 폴리곤으로 대신 쓴다.
+                        x1, y1, x2, y2 = xyxy[i]
+                        points = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+                    rips.append(RipRegion(polygon=points, conf=float(confs[i])))
                 elif cls_id in person_set:
                     persons.append(PersonBox(xyxy=tuple(xyxy[i]), conf=float(confs[i])))
 
@@ -169,29 +181,149 @@ class YoloDetector:
         )
 
 
-def resolve_weights(explicit: str | None = None) -> Path | None:
-    """가중치 경로를 찾는다. 없으면 None."""
-    candidate = explicit or os.getenv("RIP_MODEL_PATH", "")
-    if candidate:
-        path = Path(candidate)
-        return path if path.exists() else None
+def _target_class_ids(detector: Detector, hints: tuple[str, ...]) -> list[int]:
+    """서브 모델에서 그 모델의 목적에 해당하는 클래스만 고른다.
 
+    이름이 힌트에 걸리면 그 클래스만 쓰고, 하나도 안 걸리면 전용 모델로 보고 전체를 쓴다.
+    사람 모델 자리에 COCO 사전학습 모델(yolo11n.pt 등)을 붙였을 때
+    배나 새까지 사람으로 세는 것을 막는 장치다.
+    """
+    names = dict(getattr(detector, "names", {}) or {})
+    return match_class_ids(names, hints) or list(names) or [0]
+
+
+class DualDetector:
+    """이안류 탐지 모델과 사람 탐지 모델을 각각 돌려 결과를 합친다.
+
+    두 모델은 클래스 구성이 서로 다르므로, 각 서브 모델에서 쓸 클래스는 생성 시점에
+    이름으로 정해둔다 (_target_class_ids). 따라서 predict 에 넘어오는
+    rip_ids/person_ids 는 클래스 필터가 아니라 "그 종류가 필요한가"라는 on/off 스위치로만 쓴다.
+    비어 있으면 그 모델은 아예 돌리지 않는다. 이안류 구역을 시나리오로 그리는
+    core.scenario.hybrid_result 가 사람 모델만 쓰려고 rip_ids 에 () 를 넘긴다.
+    """
+
+    names = {0: "rip_current", 1: "person"}
+
+    def __init__(self, rip_detector: Detector, person_detector: Detector):
+        self.rip_detector = rip_detector
+        self.person_detector = person_detector
+        self.rip_class_ids = _target_class_ids(rip_detector, RIP_HINTS)
+        self.person_class_ids = _target_class_ids(person_detector, PERSON_HINTS)
+
+    def predict(
+        self,
+        frame_bgr: np.ndarray,
+        frame_idx: int,
+        timestamp_sec: float,
+        rip_ids: Sequence[int],
+        person_ids: Sequence[int],
+    ) -> FrameResult:
+        h, w = frame_bgr.shape[:2]
+        infer_ms = 0.0
+
+        rips: list[RipRegion] = []
+        if len(rip_ids) > 0:
+            rip_result = self.rip_detector.predict(
+                frame_bgr, frame_idx, timestamp_sec, self.rip_class_ids, []
+            )
+            rips = rip_result.rips
+            infer_ms += rip_result.infer_ms
+
+        persons: list[PersonBox] = []
+        if len(person_ids) > 0:
+            person_result = self.person_detector.predict(
+                frame_bgr, frame_idx, timestamp_sec, [], self.person_class_ids
+            )
+            persons = person_result.persons
+            infer_ms += person_result.infer_ms
+
+        mark_persons_in_rip(persons, rips)
+
+        return FrameResult(
+            frame_idx=frame_idx,
+            timestamp_sec=timestamp_sec,
+            width=w,
+            height=h,
+            rips=rips,
+            persons=persons,
+            infer_ms=infer_ms,
+        )
+
+
+def _scan_models_dir(subdir: str | None = None, skip_hints: tuple[str, ...] = ()) -> Path | None:
     models_dir = Path(__file__).resolve().parent.parent / "models"
+    if subdir:
+        models_dir = models_dir / subdir
     for pattern in ("*.pt", "*.onnx"):
-        found = sorted(models_dir.glob(pattern))
+        found = sorted(p for p in models_dir.glob(pattern) if not matches_hint(p.stem, skip_hints))
         if found:
             return found[0]
     return None
 
 
+def resolve_weights(
+    explicit: str | None = None,
+    env_var: str = "RIP_MODEL_PATH",
+    subdir: str | None = None,
+    skip_hints: tuple[str, ...] = (),
+) -> Path | None:
+    """가중치 경로를 찾는다. 없으면 None."""
+    candidate = explicit or os.getenv(env_var, "")
+    if candidate:
+        path = Path(candidate)
+        return path if path.exists() else None
+    return _scan_models_dir(subdir, skip_hints)
+
+
+def resolve_rip_weights(explicit: str | None = None) -> Path | None:
+    """이안류 탐지 모델 가중치. models/rip/ 를 먼저 보고, 없으면 기존 위치인 models/ 바로 아래도 찾는다.
+
+    루트를 훑을 때 파일명이 사람 모델처럼 보이는 것(person_best.pt 등)은 건너뛴다.
+    두 모델을 모두 models/ 바로 아래에 두면 이름순으로 사람 모델이 먼저 걸려
+    이안류 모델 자리에 조용히 들어앉는 사고가 난다.
+    """
+    return resolve_weights(explicit, "RIP_MODEL_PATH", "rip") or resolve_weights(
+        explicit, "RIP_MODEL_PATH", None, skip_hints=PERSON_HINTS
+    )
+
+
+def resolve_person_weights(explicit: str | None = None) -> Path | None:
+    """사람(표류자) 탐지 모델 가중치. models/person/ 또는 .env의 PERSON_MODEL_PATH."""
+    return resolve_weights(explicit, "PERSON_MODEL_PATH", "person")
+
+
 def build_detector(
-    weights: str | Path | None = None,
-    conf: float = DEFAULT_CONF,
-    iou: float = DEFAULT_IOU,
-    imgsz: int = DEFAULT_IMGSZ,
-) -> tuple[Detector, bool]:
-    """(탐지기, 실제_모델_여부)를 돌려준다."""
-    path = resolve_weights(str(weights) if weights else None)
-    if path is None:
-        return FakeDetector(), False
-    return YoloDetector(path, conf=conf, iou=iou, imgsz=imgsz), True
+    rip_weights: str | Path | None = None,
+    person_weights: str | Path | None = None,
+    rip_conf: float = DEFAULT_RIP_CONF,
+    rip_iou: float = DEFAULT_IOU,
+    rip_imgsz: int = DEFAULT_IMGSZ,
+    person_conf: float = DEFAULT_PERSON_CONF,
+    person_iou: float = DEFAULT_IOU,
+    person_imgsz: int = DEFAULT_IMGSZ,
+) -> tuple[Detector, bool, bool]:
+    """(탐지기, 이안류_모델_실제_여부, 사람_모델_실제_여부)를 돌려준다.
+
+    conf/iou/imgsz 는 모델별로 따로 받는다. 이안류 구역과 원거리 CCTV의 작은 사람은
+    적정 임계값이 서로 다르기 때문에 한 값을 공유하면 한쪽이 반드시 손해를 본다.
+
+    둘 다 없으면 기존처럼 완전한 FakeDetector 하나를 돌려준다.
+    한쪽만 있으면 DualDetector가 있는 쪽은 실제 추론, 없는 쪽은 FakeDetector로 채운다.
+    """
+    rip_path = resolve_rip_weights(str(rip_weights) if rip_weights else None)
+    person_path = resolve_person_weights(str(person_weights) if person_weights else None)
+
+    if rip_path is None and person_path is None:
+        return FakeDetector(), False, False
+
+    rip_detector: Detector = (
+        YoloDetector(rip_path, conf=rip_conf, iou=rip_iou, imgsz=rip_imgsz)
+        if rip_path
+        else FakeDetector()
+    )
+    person_detector: Detector = (
+        YoloDetector(person_path, conf=person_conf, iou=person_iou, imgsz=person_imgsz)
+        if person_path
+        else FakeDetector()
+    )
+    return DualDetector(rip_detector, person_detector), rip_path is not None, person_path is not None

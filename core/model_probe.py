@@ -25,9 +25,15 @@ class ModelInfo:
         return not self.rip_ids or not self.person_ids
 
 
-def _match(name: str, hints: tuple[str, ...]) -> bool:
+def matches_hint(name: str, hints: tuple[str, ...]) -> bool:
+    """클래스 이름이나 파일명이 힌트 중 하나에 걸리는지."""
     lowered = str(name).lower().replace(" ", "").replace("-", "_")
     return any(h in lowered for h in hints)
+
+
+def match_class_ids(names: dict[int, str], hints: tuple[str, ...]) -> list[int]:
+    """이름이 힌트에 걸리는 클래스 인덱스만 고른다."""
+    return [i for i, n in names.items() if matches_hint(n, hints)]
 
 
 def probe(detector) -> ModelInfo:
@@ -48,8 +54,8 @@ def probe(detector) -> ModelInfo:
             except Exception:
                 continue
 
-    info.rip_ids = [i for i, n in names.items() if _match(n, RIP_HINTS)]
-    info.person_ids = [i for i, n in names.items() if _match(n, PERSON_HINTS)]
+    info.rip_ids = match_class_ids(names, RIP_HINTS)
+    info.person_ids = match_class_ids(names, PERSON_HINTS)
     mapped = set(info.rip_ids) | set(info.person_ids)
     info.unmapped = [i for i in names if i not in mapped]
 

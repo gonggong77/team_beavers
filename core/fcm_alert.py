@@ -1,24 +1,24 @@
-"""Firebase 연동. 스냅샷을 Storage에 올리고 FCM 토픽으로 경보를 보낸다.
+"""Firebase 연동. 경보 이미지 URL을 만들고 FCM 토픽으로 경보를 보낸다.
 
-Firebase 초기화는 반드시 이 모듈 한 곳에서만 한다. firebase_admin은
-initialize_app을 한 번만 받아들이므로, 다른 곳에서 storageBucket 없이
-먼저 초기화해 버리면 업로드가 조용히 깨진다.
+이미지는 별도 스토리지에 올리지 않는다. static/ 아래 스냅샷을 Streamlit이
+이미 /app/static/ 으로 서빙하고 있으므로, 그 위에 IMAGE_BASE_URL만 붙이면
+된다 (`.streamlit/config.toml` 의 server.enableStaticServing 필요). 앱은
+그 URL을 그대로 내려받는다.
 
-이미지는 바이트를 그대로 푸시에 실을 수 없다 — FCM data 페이로드는 4KB
-제한이라 썸네일조차 들어가지 않는다. 그래서 Storage에 올린 뒤 만료형
-서명 URL만 싣고, 앱이 그 URL을 받아 내려받는다. 서명 URL은 Storage 보안
-규칙을 거치지 않으므로 앱에 Firebase Storage SDK를 넣을 필요가 없다.
+로컬 시연은 `adb reverse tcp:8501 tcp:8501` 로 열어둔 127.0.0.1 을 쓴다
+(이유는 IMAGE_BASE_URL 주석 참고). Streamlit Community Cloud 에 배포하면
+RIP_IMAGE_BASE_URL 을 https://<앱이름>.streamlit.app 으로 바꾸기만 하면 된다 —
+이때는 HTTPS라 adb reverse 도 안드로이드의 평문 허용 설정도 필요 없다.
 """
 
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
-import cv2
 import firebase_admin
-from firebase_admin import credentials, messaging, storage
+from firebase_admin import credentials, messaging
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -27,20 +27,25 @@ SERVICE_ACCOUNT_PATH = Path(
     or _REPO_ROOT / "rip_current_app" / "rip_current_app" / "serviceAccountKey.json"
 )
 
-# google-services.json 의 storage_bucket 과 같아야 한다. gs:// 접두어는 붙이지 않는다.
-STORAGE_BUCKET = os.getenv("FIREBASE_STORAGE_BUCKET", "rip-current-alert.firebasestorage.app")
+# 로컬 시연 기본값. 앱이 이 주소로 오려면 adb reverse 로 포트를 열어둬야 한다:
+#
+#     adb reverse tcp:8501 tcp:8501
+#
+# 에뮬레이터 표준 주소인 10.0.2.2 를 쓰지 않는다. 그 NAT 별칭은 adb shell(shell UID)
+# 에서는 붙지만 앱 프로세스(untrusted_app UID)에서는 10초 타임아웃이 난다 — 확인된 동작이다.
+# adb reverse 는 adb 채널로 직접 넘겨 이 문제를 통째로 피한다.
+#
+# Cloud 배포 시에는 RIP_IMAGE_BASE_URL 을 https://<앱이름>.streamlit.app 으로 주면
+# adb reverse 도, 앱의 평문 HTTP 허용도 필요 없어진다.
+IMAGE_BASE_URL = os.getenv("RIP_IMAGE_BASE_URL", "http://127.0.0.1:8501")
+
+STATIC_DIR = _REPO_ROOT / "static"
 
 # 앱의 MainActivity.kt::ALERT_TOPIC 과 동일해야 한다.
 TOPIC = "rip_current_alert"
 
 # core/schemas.py::RiskLevel 과 동일한 3단계.
 RISK_LEVELS = ("watch", "warn", "emergency")
-
-# V4 서명의 만료 상한. 이걸 넘기면 서명 자체가 거부된다.
-MAX_SIGNED_URL_DAYS = 7
-
-MAX_EDGE_PX = 1280
-JPEG_QUALITY = 80
 
 
 def _ensure_app() -> None:
@@ -52,49 +57,17 @@ def _ensure_app() -> None:
             "Firebase 콘솔에서 발급받은 JSON을 이 경로에 두거나 FIREBASE_CREDENTIALS 로 경로를 지정하세요."
         )
     cred = credentials.Certificate(str(SERVICE_ACCOUNT_PATH))
-    firebase_admin.initialize_app(cred, {"storageBucket": STORAGE_BUCKET})
+    firebase_admin.initialize_app(cred)
 
 
-def upload_snapshot(image_path: str | Path, expires_days: int = MAX_SIGNED_URL_DAYS) -> str:
-    """스냅샷을 Storage에 올리고 만료형 서명 URL을 돌려준다.
+def snapshot_url(image_path: str | Path) -> str:
+    """static/ 아래의 스냅샷을 Streamlit이 서빙하는 URL로 바꾼다.
 
-    원본 해상도 그대로 올리지 않는다. 휴대폰 화면에 띄우는 용도라 긴 변
-    1280px면 충분하고, 업로드 지연과 저장 용량이 함께 줄어든다.
-
-    오래된 파일 정리는 코드가 아니라 버킷의 수명주기 규칙이 담당한다
-    (Cloud Storage 콘솔 → 수명 주기 → Age > 14일이면 삭제).
+    이미지를 어디에도 올리지 않는다. Streamlit이 이미 띄워둔 서버가
+    파일을 그대로 내보내고, 앱은 그 주소를 Coil로 내려받는다.
     """
-    if expires_days > MAX_SIGNED_URL_DAYS:
-        raise ValueError(f"서명 URL은 최대 {MAX_SIGNED_URL_DAYS}일까지만 유효합니다: {expires_days}")
-
-    path = Path(image_path)
-    image = cv2.imread(str(path))
-    if image is None:
-        raise ValueError(f"이미지를 읽을 수 없습니다: {path}")
-
-    height, width = image.shape[:2]
-    scale = MAX_EDGE_PX / max(height, width)
-    if scale < 1.0:
-        image = cv2.resize(
-            image,
-            (round(width * scale), round(height * scale)),
-            interpolation=cv2.INTER_AREA,
-        )
-
-    ok, buffer = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
-    if not ok:
-        raise ValueError(f"JPEG 인코딩에 실패했습니다: {path}")
-
-    _ensure_app()
-    # 파일명에 이미 타임스탬프와 event_id가 들어있다 (core/pipeline.py 참고).
-    blob = storage.bucket().blob(f"snapshots/{datetime.now():%Y%m%d}/{path.name}")
-    blob.upload_from_string(buffer.tobytes(), content_type="image/jpeg")
-
-    return blob.generate_signed_url(
-        version="v4",
-        expiration=timedelta(days=expires_days),
-        method="GET",
-    )
+    relative = Path(image_path).resolve().relative_to(STATIC_DIR)
+    return f"{IMAGE_BASE_URL}/app/static/{relative.as_posix()}"
 
 
 def send_rip_current_alert(
@@ -118,7 +91,7 @@ def send_rip_current_alert(
     이름을 하나라도 다르게 보내면 그 항목만 화면 기본값으로 표시된다.
 
     image_url 은 빈 문자열이어도 된다. 앱이 비어 있으면 이미지 로딩을
-    건너뛰므로, 업로드가 실패해도 경보 자체는 내보낼 수 있다.
+    건너뛰므로, URL 생성이 실패해도 경보 자체는 내보낼 수 있다.
     """
     if risk_level not in RISK_LEVELS:
         raise ValueError(f"risk_level 은 {RISK_LEVELS} 중 하나여야 합니다: {risk_level!r}")

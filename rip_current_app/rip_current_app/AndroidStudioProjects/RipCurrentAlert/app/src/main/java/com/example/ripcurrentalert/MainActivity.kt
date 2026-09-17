@@ -128,11 +128,19 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         clockHandler.post(clockTick)
+
+        AlertBus.subscribe { data ->
+            Log.d("FCM_CHECK", "🔄 포그라운드 갱신: ${data["detected_at"]}")
+            applyAlertData(data)
+        }
+        // 화면이 꺼져 있는 동안 받아둔 경보가 있으면 지금 반영한다.
+        AlertBus.latest?.let { applyAlertData(it) }
     }
 
     override fun onPause() {
         super.onPause()
         clockHandler.removeCallbacks(clockTick)
+        AlertBus.unsubscribe()
     }
 
     /**
@@ -158,30 +166,40 @@ class MainActivity : AppCompatActivity() {
     // ---------------------------------------------------------------- 데이터
 
     private fun applyIntentData(targetIntent: Intent?) {
-        val location = targetIntent?.getStringExtra("location_name")
-        if (targetIntent == null || location.isNullOrEmpty()) {
+        val extras = targetIntent?.extras
+        if (extras == null) {
             // 푸시 없이 런처로 열린 상태. 레이아웃의 기본 표시값을 그대로 둔다.
+            paintRisk(DEFAULT_RISK)
+            return
+        }
+        applyAlertData(extras.keySet().associateWith { extras.getString(it) ?: "" })
+    }
+
+    /** AlertBus(포그라운드 수신)와 applyIntentData(알림 탭) 가 공유하는 렌더링 본체. */
+    private fun applyAlertData(data: Map<String, String>) {
+        val location = data["location_name"]
+        if (location.isNullOrEmpty()) {
             paintRisk(DEFAULT_RISK)
             return
         }
 
         // 파이프라인은 긴급 판정일 때만 알림을 보낸다. 등급 키가 없으면 긴급으로 본다.
-        val sent = targetIntent.getStringExtra("risk_level")?.lowercase()
+        val sent = data["risk_level"]?.lowercase()
         val risk = if (sent != null && RISK_LABEL.containsKey(sent)) sent else "emergency"
 
-        val personCount = targetIntent.getStringExtra("person_count")
-        val inZone = targetIntent.getStringExtra("persons_in_rip") ?: personCount ?: DEFAULT_IN_ZONE
-        val total = targetIntent.getStringExtra("total_persons") ?: personCount ?: DEFAULT_TOTAL
-        val zones = targetIntent.getStringExtra("rip_count") ?: DEFAULT_ZONES
+        val personCount = data["person_count"]
+        val inZone = data["persons_in_rip"] ?: personCount ?: DEFAULT_IN_ZONE
+        val total = data["total_persons"] ?: personCount ?: DEFAULT_TOTAL
+        val zones = data["rip_count"] ?: DEFAULT_ZONES
 
         tvCounters.text = "in-zone $inZone │ total $total │ zones $zones"
-        tvZone.text = targetIntent.getStringExtra("zone") ?: location
-        tvCamera.text = targetIntent.getStringExtra("camera_id") ?: DEFAULT_CAMERA
+        tvZone.text = data["zone"] ?: location
+        tvCamera.text = data["camera_id"] ?: DEFAULT_CAMERA
 
-        lastUpdate = targetIntent.getStringExtra("detected_at") ?: timeFmt.format(Date())
+        lastUpdate = data["detected_at"] ?: timeFmt.format(Date())
         paintRisk(risk)
 
-        val imageUrl = targetIntent.getStringExtra("image_url")
+        val imageUrl = data["image_url"]
         if (!imageUrl.isNullOrEmpty()) loadCctv(imageUrl)
     }
 
@@ -202,10 +220,17 @@ class MainActivity : AppCompatActivity() {
             // 크로스페이드를 켜면 전환 중 drawable 이 CrossfadeDrawable 이 되어
             // intrinsic 크기가 원본과 달라지고 줌 기준 행렬이 틀어진다.
             crossfade(false)
-            listener(onSuccess = { _, _ ->
-                tvCctvHint.visibility = View.GONE
-                ivCctv.post { resetZoom() }
-            })
+            listener(
+                onSuccess = { _, _ ->
+                    tvCctvHint.visibility = View.GONE
+                    ivCctv.post { resetZoom() }
+                },
+                // onError 가 없으면 로딩 실패가 "이미지 자리만 비어 있는" 상태로만 보여
+                // 원인을 찾을 수 없다. 네트워크 문제는 여기 로그로만 드러난다.
+                onError = { _, result ->
+                    Log.e("FCM_CHECK", "🖼️ 이미지 로딩 실패: ${result.throwable}", result.throwable)
+                },
+            )
         }
     }
 

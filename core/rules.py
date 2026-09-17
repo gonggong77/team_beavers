@@ -69,6 +69,7 @@ class AlertGate:
 
     _streak: int = 0
     _last_sent_at: float | None = None
+    _last_sent_persons: int = 0
 
     def should_alert(self, risk: RiskLevel, timestamp_sec: float) -> bool:
         if risk != "emergency":
@@ -85,9 +86,32 @@ class AlertGate:
         self._last_sent_at = timestamp_sec
         return True
 
+    def check(self, risk: RiskLevel, timestamp_sec: float, persons_in_rip: int) -> str | None:
+        """should_alert 에 '인원 증가 시 쿨다운 무시' 규칙을 얹은 판정.
+
+        구역 내 인원이 계속 커져야만 재발송되므로 (3명→5명→7명 식) 별도
+        쿨다운 없이도 자연히 제한된다. escalation 분기는 streak 조건 때문에
+        should_alert 가 이미 한 번 True 를 낸 뒤에만 열려, 첫 경보를 앞지르지 못한다.
+        """
+        if self.should_alert(risk, timestamp_sec):
+            self._last_sent_persons = persons_in_rip
+            return "auto"
+
+        if (
+            risk == "emergency"
+            and self._streak >= self.min_consecutive
+            and persons_in_rip > self._last_sent_persons
+        ):
+            self._last_sent_at = timestamp_sec
+            self._last_sent_persons = persons_in_rip
+            return "escalation"
+
+        return None
+
     def reset(self) -> None:
         self._streak = 0
         self._last_sent_at = None
+        self._last_sent_persons = 0
 
 
 def _self_check() -> None:
@@ -116,6 +140,15 @@ def _self_check() -> None:
     assert gate.should_alert("emergency", 0.3) is False   # 쿨다운
     assert gate.should_alert("emergency", 11.0) is True   # 쿨다운 해제
     assert gate.should_alert("warn", 12.0) is False       # 긴급 아님 -> 연속 카운트 초기화
+
+    escalation_gate = AlertGate(min_consecutive=3, cooldown_sec=10.0)
+    assert escalation_gate.check("emergency", 0.0, 3) is None       # 1회
+    assert escalation_gate.check("emergency", 0.1, 3) is None       # 2회
+    assert escalation_gate.check("emergency", 0.2, 3) == "auto"     # 3회 -> 자동 발송
+    assert escalation_gate.check("emergency", 0.3, 3) is None       # 쿨다운 중, 인원 동일
+    assert escalation_gate.check("emergency", 0.4, 2) is None       # 쿨다운 중, 인원 감소
+    assert escalation_gate.check("emergency", 0.5, 5) == "escalation"  # 쿨다운 중이어도 인원 증가 -> 즉시 발송
+    assert escalation_gate.check("emergency", 0.6, 5) is None       # 같은 인원수로는 재발송 안 함
 
     print("rules self-check passed")
 

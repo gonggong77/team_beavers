@@ -2,10 +2,14 @@
 
 수신: 김종호 · 발신: 이현경(웹) · 대상 파일: `core/notifier.py`
 
+> 텔레그램 알림은 더 이상 쓰지 않아 코드에서 제거했습니다. 알림은 이제
+> `ConsoleNotifier`(화면 기록용 기본값)와 `FcmNotifier`(안드로이드 앱 푸시) 둘뿐입니다.
+
 ## 해야 할 일은 하나입니다
 
-`TelegramNotifier.send(event) -> SendResult` 안쪽만 채워주세요.
-웹 코드는 전혀 건드릴 필요가 없습니다. 이미 뼈대와 기본 동작이 들어가 있으니 문안과 예외 처리만 다듬으면 됩니다.
+`FcmNotifier.send(event) -> SendResult` (`core/notifier.py`) 안쪽을 다듬어 주세요.
+실제 발송 로직은 `core/fcm_alert.py` 의 `send_rip_current_alert` 에 있습니다.
+웹 코드는 전혀 건드릴 필요가 없습니다.
 
 ## 받게 되는 데이터
 
@@ -32,16 +36,16 @@
 웹이 없어도 됩니다.
 
 ```bash
-export TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...
-NOTIFIER=telegram python -m core.notifier
+NOTIFIER=fcm python -m core.notifier
 ```
 
-샘플 `AlertEvent` 하나를 만들어 실제로 발송합니다.
+샘플 `AlertEvent` 하나를 만들어 실제로 발송합니다. `serviceAccountKey.json` 이 필요합니다
+(REAL_TEST_GUIDE.md 4단계 참고).
 
 전체 흐름을 보려면 CLI로 영상을 돌려보세요.
 
 ```bash
-python -m core.pipeline data/sample_beach.mp4 --skip 10 --notifier telegram
+python -m core.pipeline data/sample_beach.mp4 --skip 10 --notifier fcm
 ```
 
 ## 지켜야 할 규칙 두 가지
@@ -50,7 +54,8 @@ python -m core.pipeline data/sample_beach.mp4 --skip 10 --notifier telegram
 알림 실패가 영상 분석을 멈추면 안 됩니다. 실패는 `SendResult(ok=False, detail=...)` 로 돌려주세요.
 웹은 이 값을 받아 이벤트 로그에 `failed` 로 기록하고 계속 진행합니다.
 
-**2. 토큰을 코드에 적지 마세요.** `.env` 또는 `st.secrets` 로만 넘깁니다. `.env` 는 커밋 금지입니다.
+**2. 인증 정보를 코드에 적지 마세요.** `serviceAccountKey.json` 은 `.gitignore` 대상이고,
+배포 시에는 `st.secrets` 로 옮겨야 합니다 (REAL_TEST_GUIDE.md 참고).
 
 ## 스팸 방지는 웹에서 이미 처리합니다
 

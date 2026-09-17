@@ -6,10 +6,9 @@ streamlit>=1.50            # width="stretch" 사용. 1.62에서 st.cache가 제�
 opencv-python-headless>=4.9
 numpy>=1.26
 pandas>=2.0
-requests>=2.31
 python-dotenv>=1.0
 firebase-admin>=7.0          # FCM 발송 + Storage 업로드(스냅샷 서명 URL)
 
 # 모델을 받은 뒤에 주석을 풀고, 모델팀과 동일한 버전으로 고정하세요.
 # YOLO11로 학습했다면 보통 8.3.x 계열입니다.
-# ultralytics==8.3.0
+ultralytics==8.3.0

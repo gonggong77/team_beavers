@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    디버그 빌드에만 적용되는 매니페스트 조각. 평문 HTTP(경보 이미지가 지금은
+    http://10.0.2.2:8501 처럼 로컬 Streamlit 을 가리킴)를 여기서만 허용해서,
+    release 빌드는 평문이 계속 차단된 상태로 남는다.
+
+    최종 배포(Streamlit Community Cloud)는 https 주소가 되므로 이 파일 자체가
+    필요 없어진다 — 그때 지워도 된다.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application
+        android:usesCleartextTraffic="true"
+        tools:replace="android:usesCleartextTraffic" />
+</manifest>

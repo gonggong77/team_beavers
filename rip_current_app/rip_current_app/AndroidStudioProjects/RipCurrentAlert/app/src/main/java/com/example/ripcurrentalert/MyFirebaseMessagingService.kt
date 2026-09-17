@@ -30,6 +30,9 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val title = data["title"] ?: "⚠️ 긴급 경보"
         val body = data["body"] ?: "위험이 감지되었습니다."
 
+        // 앱이 떠 있으면 알림을 탭하지 않아도 화면이 바로 갱신된다.
+        AlertBus.publish(data)
+
         sendNotification(title, body, data)
     }
 

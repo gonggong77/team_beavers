@@ -28,9 +28,18 @@ CREATE TABLE IF NOT EXISTS events (
     snapshot_path TEXT,
     note          TEXT,
     notify_status TEXT DEFAULT 'pending',
-    notify_detail TEXT DEFAULT ''
+    notify_detail TEXT DEFAULT '',
+    trigger_kind  TEXT DEFAULT 'auto',
+    image_url     TEXT DEFAULT ''
 );
 """
+
+# CREATE TABLE IF NOT EXISTS 는 기존 DB에 새 컬럼을 추가해 주지 않는다.
+# 이미 events.db 를 가진 사용자를 위한 수동 마이그레이션.
+_MIGRATION_COLUMNS = (
+    ("trigger_kind", "TEXT DEFAULT 'auto'"),
+    ("image_url", "TEXT DEFAULT ''"),
+)
 
 
 class EventStore:
@@ -39,6 +48,10 @@ class EventStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
+            have = {row["name"] for row in conn.execute("PRAGMA table_info(events)")}
+            for column, ddl in _MIGRATION_COLUMNS:
+                if column not in have:
+                    conn.execute(f"ALTER TABLE events ADD COLUMN {column} {ddl}")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.db_path, check_same_thread=False)
@@ -54,8 +67,14 @@ class EventStore:
         with self._connect() as conn:
             conn.execute(f"INSERT OR REPLACE INTO events ({columns}) VALUES ({placeholders})", payload)
 
-    def update_notify(self, event_id: str, status: str, detail: str = "") -> None:
+    def update_notify(self, event_id: str, status: str, detail: str = "", image_url: str = "") -> None:
         with self._connect() as conn:
+            if image_url:
+                conn.execute(
+                    "UPDATE events SET notify_status = ?, notify_detail = ?, image_url = ? WHERE event_id = ?",
+                    (status, detail, image_url, event_id),
+                )
+                return
             conn.execute(
                 "UPDATE events SET notify_status = ?, notify_detail = ? WHERE event_id = ?",
                 (status, detail, event_id),
