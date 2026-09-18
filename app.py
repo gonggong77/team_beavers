@@ -51,8 +51,8 @@ DEV_DEFAULTS = {
     "person_imgsz": DEFAULT_IMGSZ,
     "frame_skip": 5,
     "max_frames": 300,
-    "min_consecutive": 3,
-    "cooldown_sec": 30.0,
+    "min_consecutive": 1,
+    "cooldown_sec": 5.0,
     "dashboard_mode": "auto",
 }
 
@@ -247,7 +247,7 @@ def sidebar() -> tuple[dict, object]:
     st.session_state["uploaded_video"] = uploaded
 
     notifier_kind = st.sidebar.selectbox(
-        "알림 발송 방식", ["console", "fcm"],
+        "알림 발송 방식", ["fcm", "console"],
         format_func={"console": "화면 기록만", "fcm": "안드로이드 앱(FCM)"}.get,
     )
 

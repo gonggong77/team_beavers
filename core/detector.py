@@ -25,7 +25,7 @@ from core.schemas import FrameResult, PersonBox, RipRegion
 
 # 이안류 구역과 원거리 CCTV의 작은 사람은 적정 conf 임계값이 서로 다르므로
 # 모델별로 따로 둔다 (한 값을 공유하면 한쪽이 반드시 손해를 본다).
-DEFAULT_RIP_CONF = 0.003
+DEFAULT_RIP_CONF = 0.25
 DEFAULT_PERSON_CONF = 0.25
 DEFAULT_IOU = 0.7
 DEFAULT_IMGSZ = 640

@@ -64,8 +64,8 @@ class AlertGate:
     cooldown_sec    : 마지막 발송 후 N초간 재발송 금지 (영상 시간 기준)
     """
 
-    min_consecutive: int = 3
-    cooldown_sec: float = 30.0
+    min_consecutive: int = 1
+    cooldown_sec: float = 20.0
 
     _streak: int = 0
     _last_sent_at: float | None = None
