@@ -1,4 +1,0 @@
-# static/ 폴더를 /app/static/<경로> 로 서빙한다.
-# 안드로이드 앱이 경보 이미지를 이 주소로 내려받으므로 끄면 이미지가 안 뜬다.
-[server]
-enableStaticServing = true

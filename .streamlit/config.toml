@@ -1,9 +1,0 @@
-# static/ 폴더를 /app/static/<경로> 로 서빙한다.
-# 안드로이드 앱이 경보 이미지를 이 주소로 내려받으므로 끄면 이미지가 안 뜬다.
-[server]
-enableStaticServing = true
-
-# 테스트 영상은 수백 MB가 기본이라 Streamlit 기본값 200MB로는 부족하다.
-# 업로드 파일은 서버 메모리에 통째로 올라가므로 무한정 키우지 말 것.
-maxUploadSize = 2000   # MB
-maxMessageSize = 2000  # MB, 업로드와 같은 값으로 맞춘다

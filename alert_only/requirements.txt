@@ -1,6 +1,0 @@
-# 알림 발송 전용 버전 의존성.
-# 모델(ultralytics / torch)과 영상 처리(opencv)는 들어 있지 않습니다.
-
-firebase-admin>=7.0        # FCM 발송
-streamlit>=1.50            # 발송 콘솔 화면. CLI(send_test.py)만 쓸 거면 없어도 됩니다
-pandas>=2.0                # 발송 기록 표
