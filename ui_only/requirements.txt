@@ -1,0 +1,8 @@
+# 화면(UI) 전용 버전 의존성.
+# 모델(ultralytics / torch)과 알림(firebase-admin)은 들어 있지 않습니다.
+# 설치 용량이 작고 GPU도 필요 없습니다.
+
+streamlit>=1.50            # width="stretch" 사용. 1.62에서 st.cache가 제거되었으니 옛 코드 복붙 주의
+opencv-python-headless>=4.9  # 프레임 읽기 + 오버레이 그리기
+numpy>=1.26
+pandas>=2.0                # 이벤트 기록 표

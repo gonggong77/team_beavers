@@ -20,13 +20,15 @@ import numpy as np
 from core.detector import (
     DEFAULT_IMGSZ,
     DEFAULT_PERSON_CONF,
+    DEFAULT_PERSON_IMGSZ,
     DEFAULT_RIP_CONF,
     Detector,
     build_detector,
+    device_label,
 )
 from core.notifier import Notifier, build_notifier
 from core.render import draw_overlay
-from core.rules import AlertGate, grade
+from core.rules import AlertGate, TrackSmoother, grade
 from core.schemas import AlertEvent, FrameResult, RiskLevel
 from core.store import EventStore
 
@@ -37,12 +39,18 @@ SNAPSHOT_DIR = Path(__file__).resolve().parent.parent / "static" / "snapshots"
 class PipelineConfig:
     rip_ids: Sequence[int] = (0,)
     person_ids: Sequence[int] = (1,)
-    frame_skip: int = 5           # N프레임마다 1회 추론
+    # 트래킹은 프레임이 연속이라고 가정한다. 이 값을 키울수록 한 스텝의 이동량이
+    # 커져 트랙 번호가 바뀌기 쉬우므로, 속도를 벌어야 하면 frame_skip 보다
+    # person_imgsz 를 먼저 낮추는 편이 낫다.
+    frame_skip: int = 2           # N프레임마다 1회 추론
     max_frames: int | None = None
     min_consecutive: int = 3
     cooldown_sec: float = 30.0
     save_snapshot: bool = True
     snapshot_keep: int = 50       # static/snapshots/ 에 최근 몇 장까지 남길지
+    smooth_window: int = 5        # 트랙별 in_rip 다수결 창. 1이면 스무딩 없음
+    smooth_min_votes: int = 3
+    show_foot: bool = False       # 침범 판정에 쓰인 발끝 점을 화면에 찍는다 (개발자용)
 
 
 @dataclass
@@ -101,15 +109,24 @@ def run(
 ) -> Iterator[Step]:
     """프레임마다 Step을 yield한다. 제너레이터라 UI가 진행 상황을 실시간으로 그릴 수 있다."""
     gate = AlertGate(min_consecutive=config.min_consecutive, cooldown_sec=config.cooldown_sec)
+    smoother = TrackSmoother(window=config.smooth_window, min_votes=config.smooth_min_votes)
     source_name = Path(video_path).name
     SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 앱은 detector 를 st.cache_resource 로 전역 공유한다. 이걸 빠뜨리면
+    # 앞 영상의 트랙 번호가 이 영상 사람에게 그대로 이어붙는다.
+    reset = getattr(detector, "reset", None)
+    if callable(reset):
+        reset()
 
     for frame, frame_idx, timestamp_sec, total in iter_video(
         video_path, config.frame_skip, config.max_frames
     ):
         result = detector.predict(frame, frame_idx, timestamp_sec, config.rip_ids, config.person_ids)
+        # 등급 판정보다 먼저 평활화해야 한다. 뒤로 가면 등급이 이미 확정돼 의미가 없다.
+        smoother.apply(result.persons)
         risk = grade(result)
-        annotated = draw_overlay(frame, result, risk)
+        annotated = draw_overlay(frame, result, risk, show_foot=config.show_foot)
 
         event = None
         trigger = gate.check(risk, timestamp_sec, result.persons_in_rip)
@@ -158,9 +175,15 @@ def _cli() -> None:
     parser.add_argument("--rip-conf", type=float, default=DEFAULT_RIP_CONF, help="이안류 모델 conf 임계값")
     parser.add_argument("--person-conf", type=float, default=DEFAULT_PERSON_CONF, help="사람 모델 conf 임계값")
     parser.add_argument("--rip-imgsz", type=int, default=DEFAULT_IMGSZ, help="이안류 모델 추론 해상도")
-    parser.add_argument("--person-imgsz", type=int, default=DEFAULT_IMGSZ, help="사람 모델 추론 해상도")
-    parser.add_argument("--skip", type=int, default=5)
+    parser.add_argument("--person-imgsz", type=int, default=DEFAULT_PERSON_IMGSZ, help="사람 모델 추론 해상도")
+    parser.add_argument("--skip", type=int, default=2)
     parser.add_argument("--max-frames", type=int, default=None)
+    parser.add_argument("--device", default=None,
+                        help="추론 장치 (cuda:0 / cpu). 비우면 GPU 유무를 보고 자동으로 정한다")
+    parser.add_argument("--no-track", action="store_true", help="사람 모델 ByteTrack 추적을 끈다")
+    parser.add_argument("--augment", action="store_true", help="사람 모델 TTA. 2~3배 느려진다")
+    parser.add_argument("--smooth-window", type=int, default=5,
+                        help="트랙별 in_rip 다수결 창 크기. 1이면 스무딩 없음")
     parser.add_argument("--notifier", default="console", choices=["console", "fcm"])
     args = parser.parse_args()
 
@@ -171,14 +194,22 @@ def _cli() -> None:
         rip_imgsz=args.rip_imgsz,
         person_conf=args.person_conf,
         person_imgsz=args.person_imgsz,
+        person_track=not args.no_track,
+        person_augment=args.augment,
+        device=args.device,
     )
     print(
         f"detector: rip={'YOLO' if rip_is_real else 'Fake(데모 모드)'} "
         f"person={'YOLO' if person_is_real else 'Fake(데모 모드)'} "
+        f"device={device_label(args.device)} "
         f"names={getattr(detector, 'names', {})}"
     )
 
-    config = PipelineConfig(frame_skip=args.skip, max_frames=args.max_frames)
+    config = PipelineConfig(
+        frame_skip=args.skip,
+        max_frames=args.max_frames,
+        smooth_window=args.smooth_window,
+    )
     store = EventStore()
     notifier = build_notifier(args.notifier)
 
@@ -186,10 +217,11 @@ def _cli() -> None:
     for step in run(args.video, detector, config, store, notifier):
         if step.event:
             alerts += 1
+        ids = sorted(p.track_id for p in step.result.persons if p.track_id is not None)
         print(
             f"frame {step.result.frame_idx:>6} t={step.result.timestamp_sec:6.2f}s "
             f"{step.risk:<9} in-zone={step.result.persons_in_rip} "
-            f"total={step.result.total_persons} {'ALERT' if step.event else ''}"
+            f"total={step.result.total_persons} ids={ids} {'ALERT' if step.event else ''}"
         )
     print(f"\n완료. 발송 이벤트 {alerts}건")
 

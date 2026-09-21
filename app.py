@@ -17,8 +17,12 @@ from core.detector import (
     DEFAULT_IMGSZ,
     DEFAULT_IOU,
     DEFAULT_PERSON_CONF,
+    DEFAULT_PERSON_IMGSZ,
+    DEFAULT_PERSON_IOU,
     DEFAULT_RIP_CONF,
     build_detector,
+    device_label,
+    resolve_device,
     resolve_person_weights,
     resolve_rip_weights,
 )
@@ -47,16 +51,36 @@ DEV_DEFAULTS = {
     "rip_iou": DEFAULT_IOU,
     "rip_imgsz": DEFAULT_IMGSZ,
     "person_conf": DEFAULT_PERSON_CONF,
-    "person_iou": DEFAULT_IOU,
-    "person_imgsz": DEFAULT_IMGSZ,
-    "frame_skip": 5,
-    "max_frames": 300,
+    "person_iou": DEFAULT_PERSON_IOU,
+    "person_imgsz": DEFAULT_PERSON_IMGSZ,
+    "person_track": True,
+    # TTA 는 추론 시간이 2~3배로 늘어 시연 중 화면이 눈에 띄게 느려진다. 기본 off.
+    "person_augment": False,
+    "smooth_window": 5,
+    # 트래킹은 프레임이 연속일수록 안정적이라 기본 간격을 좁게 둔다.
+    "frame_skip": 2,
+    # frame_skip 과 함께 봐야 한다. 둘을 곱한 값이 분석이 닿는 프레임 수다.
+    # 750 x 2 = 1500 프레임 = 30fps 기준 50초. frame_skip 을 키우면 이 값도
+    # 같이 줄여야 분석 시간이 폭증하지 않는다.
+    "max_frames": 750,
     "min_consecutive": 1,
     "cooldown_sec": 5.0,
     "dashboard_mode": "auto",
 }
 
-IMGSZ_CHOICES = [320, 416, 512, 640, 768, 960, 1280]
+IMGSZ_CHOICES = [320, 416, 512, 640, 768, 960, 1024, 1280]
+
+# 관제 화면의 기본 표시 방식. 모델이 둘 다 있어도 시나리오로 띄운다.
+#
+# 이 화면은 시스템이 어떻게 보이는지 설명하는 배경이고, 실제 탐지 성능은
+# 영상 업로드 쪽에서 보여준다. 실제 추론으로 띄우면 구역마다 24장을 미리
+# 돌려야 해서 첫 진입에 1분 넘게 걸린다 (사람 모델이 imgsz 1024 라 한 장에
+# 0.26초). 게다가 그 24장은 영상 전체에서 몇 초씩 건너뛰며 뽑은 것이라
+# 추적도 의미가 없다. 시나리오 모드는 추론을 아예 하지 않아 10초면 뜬다.
+#
+# 개발자 모드의 '관제 화면 표시 방식' 에서 hybrid/real 로 바꿀 수 있다.
+# 관제 화면에서도 모델 결과를 확인하고 싶을 때만 쓴다 — 로딩이 길어진다.
+DEFAULT_DASHBOARD_MODE = "scenario"
 
 _HEADER_CSS = """
 <style>
@@ -105,10 +129,14 @@ def load_detector(
     person_conf: float,
     person_iou: float,
     person_imgsz: int,
+    person_track: bool,
+    person_augment: bool,
 ):
     """모델은 세션마다 다시 올리면 안 되므로 cache_resource로 전역 공유한다.
 
     임계값도 캐시 키에 들어간다. 개발자 모드에서 conf 를 바꾸면 그 조합으로 새로 올라간다.
+    트래킹/TTA 도 마찬가지다. 빠뜨리면 사이드바에서 값을 바꿔도
+    캐시된 옛 detector 가 그대로 나온다.
     """
     return build_detector(
         rip_weights_key or None,
@@ -119,6 +147,8 @@ def load_detector(
         person_conf=person_conf,
         person_iou=person_iou,
         person_imgsz=person_imgsz,
+        person_track=person_track,
+        person_augment=person_augment,
     )
 
 
@@ -132,6 +162,10 @@ def main() -> None:
     st.session_state.setdefault("uploaded_video", None)
     st.session_state.setdefault("ui_mode", "user")
     st.session_state.setdefault("dev_settings", dict(DEV_DEFAULTS))
+    # 앱을 고치고 새로고침했을 때 브라우저 세션에 남은 옛 설정 dict 에는
+    # 새로 생긴 키가 없다. 빠진 것만 기본값으로 채운다 (KeyError 방지).
+    for key, value in DEV_DEFAULTS.items():
+        st.session_state["dev_settings"].setdefault(key, value)
 
     settings, detector = sidebar()
     header()
@@ -186,17 +220,6 @@ def _settings_popover() -> None:
             st.caption("개발자 모드로 바꾸면 모델·분석·판정 설정이 사이드바에 나타납니다.")
 
 
-def _auto_dashboard_mode(rip_is_real: bool, person_is_real: bool) -> str:
-    """가진 모델로 가장 정직하게 보여줄 수 있는 관제 화면 모드.
-
-    사람 모델이 없는데 real 로 두면 가짜 사람이 진짜 이안류 구역에 들어가
-    실제와 구분되지 않는 긴급 알림이 상시 화면에서 계속 발생한다.
-    """
-    if rip_is_real and person_is_real:
-        return "real"
-    if person_is_real:
-        return "hybrid"
-    return "scenario"
 
 
 def sidebar() -> tuple[dict, object]:
@@ -229,15 +252,26 @@ def sidebar() -> tuple[dict, object]:
         cfg["person_conf"],
         cfg["person_iou"],
         cfg["person_imgsz"],
+        cfg["person_track"],
+        cfg["person_augment"],
     )
     info = probe(detector)
 
     # 데모용 가짜 사람이 실제 이안류 구역 안에 들어가면 진짜와 똑같은 긴급 알림이 나간다.
     # 어느 쪽이 실제 추론인지 모드와 무관하게 항상 눈에 보여야 한다.
+    # 연산 장치도 같이 띄운다. torch 가 CPU 전용 빌드로 깔려 있으면 GPU가 꽂혀 있어도
+    # 조용히 CPU 로 떨어져 분석이 10배 이상 느려지는데, 화면에 안 보이면 시연 중에
+    # 원인을 알 길이 없다.
     st.sidebar.caption(
         f"모델 · 이안류 {'실제 추론' if rip_is_real else '데모'}"
         f" / 사람 {'실제 추론' if person_is_real else '데모'}"
+        f" · {device_label()}"
     )
+    if (rip_is_real or person_is_real) and not resolve_device().startswith("cuda"):
+        st.sidebar.warning(
+            "GPU를 쓰지 않아 분석이 10배 이상 느립니다. "
+            "requirements.txt 의 torch 설치 안내를 확인하세요."
+        )
 
     uploaded = st.sidebar.file_uploader(
         "테스트 영상",
@@ -251,7 +285,7 @@ def sidebar() -> tuple[dict, object]:
         format_func={"console": "화면 기록만", "fcm": "안드로이드 앱(FCM)"}.get,
     )
 
-    auto_mode = _auto_dashboard_mode(rip_is_real, person_is_real)
+    auto_mode = DEFAULT_DASHBOARD_MODE
     dashboard_mode = auto_mode
 
     if dev:
@@ -262,11 +296,27 @@ def sidebar() -> tuple[dict, object]:
                 "프레임 간격", 1, 30, cfg["frame_skip"],
                 help="N프레임마다 한 번 추론합니다. 값을 키우면 빨라지고 놓치는 순간이 늘어납니다.",
             )
+            if cfg["person_track"] and cfg["frame_skip"] > 4:
+                st.caption(
+                    "간격이 넓으면 추적 번호가 자주 바뀝니다. "
+                    "속도가 필요하면 이 값보다 사람 모델의 imgsz 를 먼저 낮추세요."
+                )
             cfg["max_frames"] = int(
                 st.number_input("최대 추론 횟수", 10, 5000, cfg["max_frames"], step=10)
             )
 
         with st.sidebar.expander("판정·발송 기준"):
+            # 침범 기준점은 발끝(수면 접점)으로 고정한다. 원근이 있는 CCTV 화면에서
+            # 박스 중심은 실제 사람이 서 있는 위치보다 늘 위쪽을 가리켜, 구역 경계에서
+            # 판정이 어긋난다. 모델팀 추론 스크립트도 같은 기준을 쓴다.
+            st.caption("구역 침범 기준점 · 발끝(수면 접점) 고정")
+            cfg["smooth_window"] = st.slider(
+                "추적 스무딩 창", 1, 15, cfg["smooth_window"],
+                help="사람별로 최근 N회 판정을 모아 다수결로 확정합니다. "
+                     "박스가 구역 경계에서 떨리는 것을 걸러냅니다. 1이면 사용하지 않습니다.",
+            )
+            if cfg["smooth_window"] > 1 and not cfg["person_track"]:
+                st.caption("추적이 꺼져 있어 스무딩이 적용되지 않습니다.")
             cfg["min_consecutive"] = st.slider("연속 긴급 판정 횟수", 1, 10, cfg["min_consecutive"])
             cfg["cooldown_sec"] = float(
                 st.slider("재발송 금지 시간(초)", 0, 120, int(cfg["cooldown_sec"]), 5)
@@ -280,9 +330,9 @@ def sidebar() -> tuple[dict, object]:
                 index=choices.index(cfg["dashboard_mode"]),
                 format_func=lambda m: {
                     "auto": f"자동 ({MODE_LABEL[auto_mode]})",
-                    "scenario": "시나리오 (전부 시연용)",
-                    "hybrid": "사람만 실제 탐지",
-                    "real": "전체 실제 추론",
+                    "scenario": "시나리오 (전부 시연용, 즉시 표시)",
+                    "hybrid": "사람만 실제 탐지 (로딩 김)",
+                    "real": "전체 실제 추론 (로딩 김)",
                 }[m],
                 label_visibility="collapsed",
             )
@@ -295,6 +345,13 @@ def sidebar() -> tuple[dict, object]:
             }[dashboard_mode]
             if not ready:
                 st.caption("필요한 모델이 없어 시나리오 모드로 표시됩니다.")
+            elif dashboard_mode != "scenario":
+                # 구역마다 24장을 미리 추론한다. 시연 직전에 무심코 켜면
+                # 화면이 1분 넘게 안 뜬다.
+                st.caption(
+                    "구역 5곳을 미리 추론하느라 첫 표시까지 1분 이상 걸립니다. "
+                    "모델 성능 확인은 영상 업로드 쪽이 빠릅니다."
+                )
 
     settings = {
         "dashboard_mode": dashboard_mode,
@@ -303,6 +360,7 @@ def sidebar() -> tuple[dict, object]:
         "weights_key": (
             f"{rip_weights_key}@{cfg['rip_conf']}/{cfg['rip_iou']}/{cfg['rip_imgsz']}"
             f"|{person_weights_key}@{cfg['person_conf']}/{cfg['person_iou']}/{cfg['person_imgsz']}"
+            f"/track={cfg['person_track']}/tta={cfg['person_augment']}"
         ),
         "rip_ids": info.rip_ids or FALLBACK_RIP_IDS,
         "person_ids": info.person_ids or FALLBACK_PERSON_IDS,
@@ -310,6 +368,7 @@ def sidebar() -> tuple[dict, object]:
         "max_frames": cfg["max_frames"],
         "min_consecutive": cfg["min_consecutive"],
         "cooldown_sec": cfg["cooldown_sec"],
+        "smooth_window": cfg["smooth_window"],
         "notifier_kind": notifier_kind,
         "dev_mode": dev,
     }
@@ -355,6 +414,20 @@ def _model_settings(cfg: dict, detector, rip_found, person_found,
                 help="추론 해상도. 학습 때 쓴 값과 맞추세요. "
                      "키우면 작은 객체에 유리하지만 그만큼 느려집니다.",
             )
+
+            # 트래킹과 TTA 는 사람 모델에만 붙인다. 이안류 구역은 개체를 세는
+            # 대상이 아니라 번호를 이어줄 이유가 없고, 두 기법 모두 느려진다.
+            if prefix == "person":
+                cfg["person_track"] = st.checkbox(
+                    "추적 사용 (ByteTrack)", value=bool(cfg["person_track"]),
+                    help="같은 사람에게 프레임 내내 같은 번호를 붙입니다. "
+                         "번호가 있어야 '추적 스무딩'이 동작합니다.",
+                )
+                cfg["person_augment"] = st.checkbox(
+                    "TTA 사용 (augment)", value=bool(cfg["person_augment"]),
+                    help="여러 배율로 추론해 합칩니다. 작은 사람을 더 잡지만 "
+                         "추론 시간이 2~3배로 늘어 시연이 느려집니다.",
+                )
             st.divider()
 
         st.caption("값을 바꾸면 그 조합으로 모델을 다시 올립니다. 잠시 걸릴 수 있습니다.")

@@ -11,3 +11,8 @@ static/snapshots/
 rip_current_app/rip_current_app/serviceAccountKey.json
 /backup
 model_simulation/test_video/
+rip_service_console/test_video/
+rip_service_console/alert/serviceAccountKey.json
+rip_service_console/*.pt
+rip_service_console/data/events.db
+rip_service_console/static/snapshots/

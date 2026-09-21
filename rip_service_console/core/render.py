@@ -1,10 +1,4 @@
-"""오버레이 렌더링.
-
-Ultralytics의 results.plot()을 쓰지 않는 이유:
-  1) 모델 출력 형식이 바뀌면 화면이 같이 깨진다
-  2) 위험 등급별 색과 한글 문구를 우리 마음대로 못 넣는다
-직접 그리면 FakeDetector와 실제 모델이 완전히 같은 화면을 만든다.
-"""
+"""오버레이 렌더링 (동영상 프레임 하단 위험 상태 일체형 렌더러 및 이전 호환 함수 포함)."""
 
 from __future__ import annotations
 
@@ -16,6 +10,14 @@ from core.schemas import RISK_COLOR_BGR, RISK_LABEL, FrameResult, RiskLevel
 RIP_FILL_ALPHA = 0.28
 PERSON_SAFE_BGR = (90, 220, 90)
 PERSON_RISK_BGR = (0, 0, 255)
+
+RISK_HEX = {"watch": "#2e9e5b", "warn": "#e08a00", "emergency": "#d6202a"}
+
+RISK_DESC = {
+    "watch": "이안류 의심 구역 없음",
+    "warn": "구역은 있으나 인원 없음",
+    "emergency": "구역 안에 인원 감지",
+}
 
 
 def draw_overlay(
@@ -29,7 +31,7 @@ def draw_overlay(
     canvas = frame_bgr.copy()
     color = RISK_COLOR_BGR[risk]
 
-    # 이안류 구역: 반투명 채움 + 외곽선
+    # 1. 이안류 구역: 반투명 채움 + 외곽선
     if result.rips:
         layer = canvas.copy()
         for rip in result.rips:
@@ -41,79 +43,94 @@ def draw_overlay(
             cv2.polylines(canvas, [pts], isClosed=True, color=color, thickness=2)
             if show_conf:
                 x, y = pts[0][0]
-                cv2.putText(canvas, f"rip {rip.conf:.2f}", (int(x), max(int(y) - 6, 12)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
+                cv2.putText(
+                    canvas,
+                    f"rip {rip.conf:.2f}",
+                    (int(x), max(int(y) - 6, 12)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    color,
+                    1,
+                    cv2.LINE_AA,
+                )
 
-    # 사람 박스: 구역 안이면 빨강, 밖이면 초록
+    # 2. 사람 박스: 구역 안이면 빨강, 밖이면 초록
     for person in result.persons:
         x1, y1, x2, y2 = (int(v) for v in person.xyxy)
         box_color = PERSON_RISK_BGR if person.in_rip else PERSON_SAFE_BGR
         thickness = 3 if person.in_rip else 1
         cv2.rectangle(canvas, (x1, y1), (x2, y2), box_color, thickness)
         if show_conf:
-            # 트랙 번호가 있으면 앞에 붙인다. 같은 번호가 유지되는지 눈으로 확인하는 용도다.
             tag = "" if person.track_id is None else f"#{person.track_id} "
-            cv2.putText(canvas, f"{tag}{person.conf:.2f}", (x1, max(y1 - 4, 10)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, box_color, 1, cv2.LINE_AA)
+            cv2.putText(
+                canvas,
+                f"{tag}{person.conf:.2f}",
+                (x1, max(y1 - 4, 10)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.4,
+                box_color,
+                1,
+                cv2.LINE_AA,
+            )
         if show_foot:
-            # 침범 판정에 실제로 쓰이는 점. 박스가 구역에 걸쳤을 때
-            # 왜 그런 판정이 나왔는지 이 점 하나로 설명된다.
             fx, fy = person.bottom_center
-            cv2.circle(canvas, (int(fx), int(fy)), 3, box_color, -1)
+            cv2.circle(canvas, (int(fx), int(fy)), 4, box_color, -1)
 
-    return _draw_banner(canvas, result, risk, time_label)
-
-
-def _draw_banner(canvas: np.ndarray, result: FrameResult, risk: RiskLevel,
-                 time_label: str | None = None) -> np.ndarray:
-    """상단 상태 띠. 한글 폰트 의존을 피하려고 영문 키워드를 쓴다.
-
-    한글로 띄우고 싶으면 Pillow + NanumGothic 으로 교체하면 되지만,
-    폰트 파일이 배포 환경에 없으면 깨지므로 MVP에서는 영문으로 둔다.
-    한글 등급 문구는 Streamlit 화면 쪽에서 별도로 크게 표시한다.
-    """
-    h, w = canvas.shape[:2]
-    band = max(int(h * 0.07), 34)
-    color = RISK_COLOR_BGR[risk]
-
-    cv2.rectangle(canvas, (0, 0), (w, band), color, thickness=-1)
-    stamp = time_label if time_label is not None else f"t={result.timestamp_sec:.1f}s"
-    text = (
-        f"{risk.upper()}  |  in-zone {result.persons_in_rip}"
-        f"  |  total {result.total_persons}"
-        f"  |  zones {result.rip_count}"
-        f"  |  {stamp}"
-    )
-    cv2.putText(canvas, text, (12, int(band * 0.68)),
-                cv2.FONT_HERSHEY_SIMPLEX, min(w / 1100, 0.9), (255, 255, 255), 2, cv2.LINE_AA)
+    # 상/하단 한글 상태 표시는 Streamlit HTML 바로 렌더링한다.
     return canvas
 
 
-def risk_badge_markdown(risk: RiskLevel) -> str:
-    """Streamlit 본문에 띄울 한글 등급 배지."""
-    emoji = {"watch": "🟢", "warn": "🟠", "emergency": "🔴"}[risk]
-    return f"{emoji} **{RISK_LABEL[risk]}**"
+def top_bar_html(risk: RiskLevel, result: FrameResult, clock: str) -> str:
+    """영상 위에 붙는 한글 상태 요약 바."""
+    color = RISK_HEX[risk]
+    return (
+        f"<div style='background:{color};color:#fff;border-radius:5px 5px 0 0;"
+        f"padding:13px 18px 28px;font-size:1rem;font-weight:800'>"
+        f"{RISK_LABEL[risk]} | 구역 내 인원 {result.persons_in_rip}"
+        f" | 화면 전체 인원 {result.total_persons}"
+        f" | 이안류 의심 구역 {result.rip_count} | {clock}</div>"
+    )
 
 
-# --------------------------------------------------------------------------
-# 화면용 HTML 조각
-# --------------------------------------------------------------------------
+IDLE_HEX = "#f0f2f6"
+IDLE_TEXT_HEX = "#31333f"
 
-RISK_HEX = {"watch": "#2e9e5b", "warn": "#e08a00", "emergency": "#d6202a"}
 
-RISK_DESC = {
-    "watch": "이안류 의심 구역 없음",
-    "warn": "구역은 있으나 인원 없음",
-    "emergency": "구역 안에 인원 감지",
-}
+def idle_top_bar_html(text: str) -> str:
+    """대기/준비 상태에서 쓰는 중립색 상단 바 (분석중 상단 바와 동일 구조)."""
+    return (
+        f"<div style='background:{IDLE_HEX};color:{IDLE_TEXT_HEX};border-radius:5px 5px 0 0;"
+        f"padding:13px 18px 28px;font-size:1rem;font-weight:800'>{text}</div>"
+    )
+
+
+def idle_bottom_panel_html(zone: str, camera: str, text: str, guide: str) -> str:
+    """대기/준비 상태에서 쓰는 중립색 하단 패널 (분석중 하단 패널과 동일 구조)."""
+    return (
+        f"<div style='background:{IDLE_HEX};color:{IDLE_TEXT_HEX};border-radius:0 0 5px 5px;"
+        f"padding:16px;text-align:center;margin-bottom:12px'>"
+        f"<div style='font-size:.95rem;font-weight:700;opacity:.95'>{zone} | {camera}</div>"
+        f"<div style='font-size:2.6rem;font-weight:900;line-height:1.2;margin:2px 0 6px'>"
+        f"{text}</div>"
+        f"<div style='font-size:.95rem;font-weight:600;opacity:.95'>{guide}</div></div>"
+    )
+
+
+def bottom_panel_html(risk: RiskLevel, zone: str, camera: str, guide: str) -> str:
+    """영상 아래에 붙는 한글 위험 등급 패널."""
+    color = RISK_HEX[risk]
+    return (
+        f"<div style='background:{color};color:#fff;border-radius:0 0 5px 5px;"
+        f"padding:16px;text-align:center;margin-bottom:12px'>"
+        f"<div style='font-size:.95rem;font-weight:700;opacity:.95'>{zone} | {camera}</div>"
+        f"<div style='font-size:2.6rem;font-weight:900;line-height:1.2;margin:2px 0 6px'>"
+        f"{RISK_LABEL[risk]}</div>"
+        f"<div style='font-size:.95rem;font-weight:600;opacity:.95'>{guide}</div></div>"
+    )
 
 
 def risk_bar_html(risk: RiskLevel) -> str:
-    """영상 바로 아래에 깔 전체 폭 등급 표시줄.
-
-    현재 등급 하나만 화면 너비 전체에 크게 띄운다.
-    멀리서도 색과 글자만 보고 즉시 판단할 수 있어야 한다.
-    """
+    """기존 dashboard.py 호환용 전체 폭 등급 표시줄 HTML 함수."""
     color = RISK_HEX[risk]
     icon = "🚨 " if risk == "emergency" else ""
     return (
@@ -127,17 +144,15 @@ def risk_bar_html(risk: RiskLevel) -> str:
     )
 
 
-def status_panel_html(risk: RiskLevel, title: str, info_rows: list[tuple[str, str]],
-                      metrics: list[tuple[str, str, bool]], guide: str, footer: str) -> str:
-    """우측 상황 정보 패널 전체를 한 덩어리로 만든다.
-
-    영상과 높이를 맞추는 것이 핵심이다.
-    영상은 16:9이고 좌우 열 비율이 2.7:1이므로, 패널 높이는 항상 패널 너비의
-    2.7 x 9/16 = 1.51875 배가 된다. aspect-ratio 로 그 비율을 고정하면
-    창 크기가 바뀌어도 영상 아래끝과 패널 아래끝이 함께 움직인다.
-
-    요소를 따로 그리지 않고 하나의 flex 열로 묶어야 간격이 일정하고 겹치지 않는다.
-    """
+def status_panel_html(
+    risk: RiskLevel,
+    title: str,
+    info_rows: list[tuple[str, str]],
+    metrics: list[tuple[str, str, bool]],
+    guide: str,
+    footer: str,
+) -> str:
+    """우측 상황 정보 패널 HTML."""
     color = RISK_HEX[risk]
 
     info = "".join(

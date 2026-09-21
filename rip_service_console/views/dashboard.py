@@ -1,10 +1,12 @@
-"""상시 관제 화면.
+"""상시 관제 화면 (UI 전용).
 
 좌측: 큰 CCTV 화면 + 영상 바로 아래 전체 폭 등급 표시줄
 우측: 상황 정보 패널 하나. 영상과 같은 높이로 맞춰진다.
 
 구역 A~E는 10초 간격으로 자동 순환한다.
-사이드바에서 테스트 영상을 올리면 같은 자리에 분석 결과가 대신 재생된다.
+사이드바에서 테스트 영상을 올리면 같은 자리에 분석 화면이 대신 재생된다.
+
+표시되는 이안류 구역과 사람은 모두 시연을 위해 구성된 값이다 (실제 추론 아님).
 """
 
 from __future__ import annotations
@@ -27,21 +29,13 @@ ACTION_GUIDE = {
     "watch": "정상 관측 중입니다.",
 }
 
-MODE_NOTE = {
-    "scenario": "이안류 구역과 사람 표시는 시연을 위해 구성된 값입니다. 실제 추론 결과가 아닙니다.",
-    "hybrid": "사람은 실제 탐지 결과이며, 이안류 의심 구역은 시연을 위해 구성된 값입니다.",
-    "real": "이안류 구역과 사람 모두 실제 모델 추론 결과입니다.",
-}
+MODE_NOTE = "이안류 구역과 사람 표시는 시연을 위해 구성된 값입니다. 실제 추론 결과가 아닙니다."
 
 
-@st.cache_resource(show_spinner="관제 화면을 준비하고 있습니다. 실제 추론 모드는 시간이 걸립니다.")
-def _streams(mode: str, weights_key: str, rip_ids: tuple, person_ids: tuple, _detector):
-    """모드나 모델이 바뀌면 자동으로 다시 만든다.
-
-    _detector 는 앞에 밑줄이 있어 캐시 키에서 제외된다.
-    대신 weights_key 가 모델 식별자 역할을 한다.
-    """
-    return build_main_streams(mode, _detector, rip_ids, person_ids)
+@st.cache_resource(show_spinner="관제 화면을 준비하고 있습니다.")
+def _streams():
+    """구역 A~E의 프레임을 한 번만 읽어 메모리에 올린다."""
+    return build_main_streams()
 
 
 @st.cache_resource
@@ -50,23 +44,15 @@ def _started_at() -> float:
     return time.time()
 
 
-def render(mode: str = "scenario", detector=None, weights_key: str = "",
-           rip_ids=(), person_ids=()) -> None:
-    # 시나리오 모드는 모델을 쓰지 않는다. weights_key 를 그대로 넘기면
-    # 개발자가 사이드바에서 conf 를 만질 때마다 관제 화면을 통째로 다시 만든다.
-    key = "" if mode == "scenario" else weights_key
-    streams = _streams(mode, key, tuple(rip_ids), tuple(person_ids), detector)
-    actual = streams[0].mode  # 모델이 없으면 scenario로 강등된다
-
-    if actual != mode:
-        st.info("모델이 없어 시나리오 모드로 표시합니다. 사이드바에서 모델 경로를 지정해 주세요.")
+def render() -> None:
+    streams = _streams()
 
     viewer, panel = st.columns([2.7, 1], gap="medium")
     _live_area(viewer, panel, streams)
 
     st.divider()
     st.caption(
-        f"{MODE_NOTE[actual]} {SAFETY_NOTE} "
+        f"{MODE_NOTE} {SAFETY_NOTE} "
         "화면의 A~E는 가상 관측구역이며 실제 해수욕장 정보가 아닙니다."
     )
 

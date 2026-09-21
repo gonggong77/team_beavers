@@ -1,13 +1,10 @@
-"""상시 관제 화면의 영상 공급과 탐지.
+"""관제 화면에 흘려보낼 영상과 표시 데이터를 만든다 (시연용 값).
 
-세 가지 모드를 지원한다. 화면 코드는 셋 다 똑같이 `.at(tick)` 만 호출한다.
+원본 프로젝트의 core/scenario.py 에서 모델을 쓰지 않는 'scenario' 모드만 남긴 것이다.
+실제 추론 경로(hybrid / real)는 이 UI 버전에 들어 있지 않다.
 
-  scenario : 이안류도 사람도 전부 가짜. 모델과 영상이 없어도 돌아간다
-  hybrid   : 사람은 실제 탐지, 이안류 구역만 시나리오. 모델 오기 전 권장
-  real     : 이안류와 사람 모두 실제 추론. 모델을 받은 뒤 사용
-
-hybrid와 real은 첫 로딩 때 미리 추론해서 결과를 메모리에 담아둔다(사전 렌더링).
-매 프레임 추론하면 5분할 화면이 CPU에서 버티지 못한다.
+  - 영상 파일이 있으면 그 프레임을 배경으로 쓴다
+  - 없으면 합성 해변 배경을 그려서라도 화면이 비지 않게 한다
 
 실제 해수욕장 이름은 쓰지 않는다. 오탐이 실제 지명과 엮이면 안 되기 때문이다.
 """
@@ -21,28 +18,25 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from core.detector import tracking_disabled
 from core.rules import grade, mark_persons_in_rip
 from core.schemas import FrameResult, PersonBox, RipRegion, RiskLevel
 
-CCTV_DIR = Path(__file__).resolve().parent.parent / "data" / "cctv"
+_HERE = Path(__file__).resolve().parent.parent
+
+# 이 폴더 안의 data/cctv/ 를 먼저 보고, 없으면 원본 프로젝트의 data/cctv/ 를 본다.
+# 둘 다 없으면 합성 배경으로 돌아간다 (영상 없이도 화면은 뜬다).
+CCTV_DIR = next(
+    (p for p in (_HERE / "data" / "cctv", _HERE.parent / "data" / "cctv") if p.exists()),
+    _HERE / "data" / "cctv",
+)
 
 PANEL_W, PANEL_H = 480, 270      # 작은 썸네일용
 MAIN_W, MAIN_H = 720, 405        # 메인 뷰어용
 MAIN_FRAMES = 24          # 메인 뷰어가 구역마다 메모리에 올릴 프레임 수
-                          # A~E 5개를 전부 올리므로 늘리면 메모리가 그만큼 커진다
-BUFFER_FRAMES = 60        # scenario 모드에서 순환 재생할 프레임 수
-INFER_FRAMES = 40         # hybrid/real 모드에서 사전 추론할 프레임 수 (늘리면 로딩이 길어진다)
+BUFFER_FRAMES = 60        # 순환 재생할 프레임 수
 
 MAIN_BEACH = "A"          # 순환을 끄면 이 구역만 띄운다
 ROTATE_SEC = 10.0         # 구역 순환 간격(초)
-
-MODES = ("scenario", "hybrid", "real")
-MODE_LABEL = {
-    "scenario": "시나리오 (모델 없음)",
-    "hybrid": "사람만 실제 탐지",
-    "real": "전체 실제 추론",
-}
 
 
 @dataclass
@@ -55,7 +49,7 @@ class Beach:
     camera_id: str            # "CCTV-A01"
     has_rip: bool             # 이안류 의심 구역 존재 여부
     person_in_rip: bool       # 구역 안에 사람이 있는지
-    people_on_shore: int = 3  # scenario 모드에서 그릴 구역 밖 인원
+    people_on_shore: int = 3  # 구역 밖에 그릴 인원
     seed: int = 0
 
     @property
@@ -65,7 +59,7 @@ class Beach:
         return "emergency" if self.person_in_rip else "warn"
 
 
-# 기획서 FR-03 기준으로 3단계가 한 화면에 모두 보이도록 구성했다.
+# 위험 등급 3단계가 한 화면에 모두 보이도록 구성했다.
 BEACHES: list[Beach] = [
     Beach("A", "A 해변", "가상 관측구역 A-1", "CCTV-A01", True, True, 3, seed=11),
     Beach("B", "B 해변", "가상 관측구역 B-2", "CCTV-B02", False, False, 2, seed=23),
@@ -153,10 +147,11 @@ def _synth_backdrop(beach: Beach, tick: int,
 
 
 # --------------------------------------------------------------------------
-# 이안류 구역 생성 (scenario / hybrid 공용)
+# 표시용 구역·사람 생성
 # --------------------------------------------------------------------------
 
-def _rip_polygon(cx: float, cy: float, w: int, h: int, t: float, seed: int) -> list[tuple[float, float]]:
+def _rip_polygon(cx: float, cy: float, w: int, h: int, t: float,
+                 seed: int) -> list[tuple[float, float]]:
     rx, ry = w * 0.15, h * 0.19
     return [
         (
@@ -177,12 +172,8 @@ def _box(w: int, h: int, fx: float, fy: float, conf: float) -> PersonBox:
     return PersonBox(xyxy=(cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2), conf=conf)
 
 
-# --------------------------------------------------------------------------
-# 모드별 결과 생성
-# --------------------------------------------------------------------------
-
 def scenario_result(beach: Beach, frame, frame_idx: int, t: float) -> FrameResult:
-    """전부 가짜. 모델도 영상도 없이 화면을 채운다."""
+    """구역과 사람을 시연용 값으로 만든다. 모델도 영상도 없이 화면을 채운다."""
     h, w = frame.shape[:2]
 
     rips: list[RipRegion] = []
@@ -207,89 +198,23 @@ def scenario_result(beach: Beach, frame, frame_idx: int, t: float) -> FrameResul
     return FrameResult(frame_idx, t, w, h, rips, persons)
 
 
-def hybrid_result(beach: Beach, detector, person_ids, frame, frame_idx: int, t: float) -> FrameResult:
-    """사람은 실제 탐지, 이안류 구역만 시나리오.
-
-    구역 위치를 실제 탐지 결과에 맞춰 잡는 것이 핵심이다.
-      person_in_rip=True  -> 실제로 탐지된 사람 위에 구역을 그린다 (A 해변)
-      person_in_rip=False -> 탐지된 사람에게서 가장 먼 수면에 구역을 그린다 (C, E 해변)
-    덕분에 빈 바다에 박스가 떠 있거나, 구역 안에 아무도 없는데 긴급이 뜨는 일이 없다.
-    """
-    detected = detector.predict(frame, frame_idx, t, (), person_ids)
-    h, w = detected.height, detected.width
-    persons = detected.persons
-
-    rips: list[RipRegion] = []
-    if beach.has_rip:
-        cx, cy = _pick_rip_center(beach, persons, w, h)
-        rips.append(RipRegion(_rip_polygon(cx, cy, w, h, t, beach.seed), _rip_conf(t, beach.seed)))
-
-    mark_persons_in_rip(persons, rips)
-    return FrameResult(frame_idx, t, w, h, rips, persons, detected.infer_ms)
-
-
-def _pick_rip_center(beach: Beach, persons, w: int, h: int) -> tuple[float, float]:
-    water = [p for p in persons if p.center[1] < h * 0.80]  # 수면 쪽에 있는 사람만 후보
-
-    if beach.person_in_rip:
-        if water:  # 화면 중앙에 가장 가까운 사람 위에 구역을 얹는다
-            return min(water, key=lambda p: abs(p.center[0] - w / 2)).center
-        return w * 0.46, h * 0.55  # 탐지가 없으면 기본 위치
-
-    # 사람이 없어야 하는 구역: 후보 지점 중 사람과 가장 먼 곳을 고른다
-    candidates = [(w * fx, h * 0.50) for fx in (0.20, 0.35, 0.50, 0.65, 0.80)]
-    if not persons:
-        return candidates[2]
-    return max(candidates, key=lambda pt: min(math.dist(pt, p.center) for p in persons))
-
-
-def real_result(beach: Beach, detector, rip_ids, person_ids, frame, frame_idx: int, t: float) -> FrameResult:
-    """이안류와 사람 모두 실제 추론. 모델을 받은 뒤 이 경로를 쓴다."""
-    return detector.predict(frame, frame_idx, t, rip_ids, person_ids)
-
-
 # --------------------------------------------------------------------------
 # 화면이 사용하는 단일 인터페이스
 # --------------------------------------------------------------------------
 
 class BeachStream:
-    """한 해변의 프레임과 탐지 결과를 tick으로 조회한다.
+    """한 해변의 프레임과 표시 데이터를 tick 으로 조회한다.
 
-    scenario 모드는 매번 계산하고(가벼움), hybrid/real 모드는 생성 시 한 번만 추론한다.
-    화면은 모드를 몰라도 되고 `.at(tick)` 만 호출하면 된다.
+    화면은 `.at(tick)` 만 호출하면 된다. 나중에 실제 추론을 붙일 때도
+    이 메서드의 반환 모양(프레임, FrameResult, 등급)만 지키면 화면은 그대로 쓴다.
     """
 
-    def __init__(self, beach: Beach, video: Path | None, mode: str = "scenario",
-                 detector=None, rip_ids=(), person_ids=(),
+    def __init__(self, beach: Beach, video: Path | None,
                  size: tuple[int, int] = (PANEL_W, PANEL_H)):
         self.beach = beach
-        self.mode = mode if mode in MODES else "scenario"
-        if self.mode != "scenario" and detector is None:
-            self.mode = "scenario"
-
-        count = BUFFER_FRAMES if self.mode == "scenario" else INFER_FRAMES
-        if size == (MAIN_W, MAIN_H):
-            count = min(count, MAIN_FRAMES)
+        self.mode = "scenario"
+        count = min(BUFFER_FRAMES, MAIN_FRAMES) if size == (MAIN_W, MAIN_H) else BUFFER_FRAMES
         self.frames = load_frames(beach, video, count, size)
-        self._cache: list[FrameResult] | None = None
-
-        if self.mode != "scenario":
-            # load_frames 는 영상 전체에서 띄엄띄엄 뽑는다. 프레임 사이가 수 초씩
-            # 벌어져 추적이 의미를 잃으므로 이 구간에서는 아예 끈다.
-            # reset 은 해변마다 트래커를 비워, 앞 해변의 번호가 다음 해변 사람에게
-            # 이어붙는 것을 막는다 (detector 는 해변 A~E가 공유한다).
-            reset = getattr(detector, "reset", None)
-            if callable(reset):
-                reset()
-
-            self._cache = []
-            with tracking_disabled(detector):
-                for i, frame in enumerate(self.frames):
-                    t = i * 0.7
-                    if self.mode == "hybrid":
-                        self._cache.append(hybrid_result(beach, detector, person_ids, frame, i, t))
-                    else:
-                        self._cache.append(real_result(beach, detector, rip_ids, person_ids, frame, i, t))
 
     def __len__(self) -> int:
         return len(self.frames)
@@ -297,37 +222,19 @@ class BeachStream:
     def at(self, tick: int) -> tuple[np.ndarray, FrameResult, RiskLevel]:
         i = tick % len(self.frames)
         frame = self.frames[i].copy()
-        result = self._cache[i] if self._cache is not None else scenario_result(
-            self.beach, frame, tick, tick * 0.7
-        )
+        result = scenario_result(self.beach, frame, tick, tick * 0.7)
         return frame, result, grade(result)
 
 
-def build_streams(mode: str = "scenario", detector=None, rip_ids=(), person_ids=(),
-                  size: tuple[int, int] = (PANEL_W, PANEL_H)) -> dict[str, BeachStream]:
+def build_streams(size: tuple[int, int] = (PANEL_W, PANEL_H)) -> dict[str, BeachStream]:
     sources = resolve_sources()
-    return {
-        b.code: BeachStream(b, sources[b.code], mode, detector, rip_ids, person_ids, size)
-        for b in BEACHES
-    }
+    return {b.code: BeachStream(b, sources[b.code], size) for b in BEACHES}
 
 
-def build_main_stream(mode: str = "scenario", detector=None, rip_ids=(), person_ids=(),
-                      code: str = MAIN_BEACH) -> BeachStream:
-    """상시 화면용 단일 스트림."""
-    beach = next(b for b in BEACHES if b.code == code)
-    video = resolve_sources()[beach.code]
-    return BeachStream(beach, video, mode, detector, rip_ids, person_ids, (MAIN_W, MAIN_H))
-
-
-def build_main_streams(mode: str = "scenario", detector=None,
-                       rip_ids=(), person_ids=()) -> list[BeachStream]:
+def build_main_streams() -> list[BeachStream]:
     """A~E 전체를 메인 해상도로 준비한다. 순환 재생용이며 BEACHES 순서를 따른다."""
     sources = resolve_sources()
-    return [
-        BeachStream(b, sources[b.code], mode, detector, rip_ids, person_ids, (MAIN_W, MAIN_H))
-        for b in BEACHES
-    ]
+    return [BeachStream(b, sources[b.code], (MAIN_W, MAIN_H)) for b in BEACHES]
 
 
 def rotating_index(elapsed_sec: float, count: int, interval: float = ROTATE_SEC) -> int:

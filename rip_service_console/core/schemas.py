@@ -1,10 +1,8 @@
-"""팀 공통 데이터 계약.
+"""화면이 그리는 데이터의 모양.
 
-이 파일은 웹(Streamlit), 모델, 알림 세 파트가 모두 참조하는 유일한 계약서다.
-여기 정의된 필드를 바꿀 때는 반드시 팀 전체에 공유한다.
-
-- FrameResult : 화면 렌더링용. numpy 배열을 포함할 수 있어 직렬화하지 않는다.
-- AlertEvent  : 알림/로그용. JSON 직렬화가 항상 가능해야 한다.
+원본 프로젝트(core/schemas.py)의 팀 공통 계약에서 화면에 필요한 것만 옮겼다.
+필드 이름과 의미는 원본과 같으므로, 나중에 실제 모델·알림과 합칠 때
+이 dataclass 를 그대로 받아 쓰면 화면 코드는 고칠 게 없다.
 """
 
 from __future__ import annotations
@@ -14,7 +12,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from typing import Literal
 
-# FR-03 위험 등급 3단계
+# 위험 등급 3단계
 RiskLevel = Literal["watch", "warn", "emergency"]
 
 RISK_LABEL: dict[str, str] = {
@@ -32,19 +30,17 @@ RISK_COLOR_BGR: dict[str, tuple[int, int, int]] = {
 
 RISK_ORDER: dict[str, int] = {"watch": 0, "warn": 1, "emergency": 2}
 
-# 모든 출력에 따라붙는 안전 문구 (기획서 NFR-04)
+# 모든 출력에 따라붙는 안전 문구
 SAFETY_NOTE = "AI 참고용 탐지 결과입니다. 현장 안전요원의 확인이 필요합니다."
 
 
 @dataclass
 class PersonBox:
-    """탐지된 사람 한 명."""
+    """화면에 그릴 사람 한 명."""
 
     xyxy: tuple[float, float, float, float]  # 원본 프레임 픽셀 좌표
     conf: float
     in_rip: bool = False
-    # ByteTrack 이 붙여준 추적 번호. 트래킹을 끄면, 또는 추적이 막 시작돼
-    # 아직 번호가 없으면 None 이다. TrackSmoother 는 번호가 있는 박스만 다룬다.
     track_id: int | None = None
 
     @property
@@ -68,7 +64,7 @@ class RipRegion:
 
 @dataclass
 class FrameResult:
-    """한 프레임의 추론 결과. 화면 렌더링 전용."""
+    """한 프레임분 화면 데이터."""
 
     frame_idx: int
     timestamp_sec: float
@@ -93,7 +89,11 @@ class FrameResult:
 
 @dataclass
 class AlertEvent:
-    """알림 파트로 넘기는 표준 이벤트. JSON 직렬화 가능해야 한다."""
+    """이벤트 기록 표에 한 줄로 들어가는 데이터.
+
+    이 UI 버전에서는 실제로 어디에도 발송하지 않는다.
+    화면 표와 갤러리를 채우는 용도로만 만든다.
+    """
 
     risk_level: RiskLevel
     persons_in_rip: int
@@ -102,24 +102,23 @@ class AlertEvent:
     frame_idx: int
     timestamp_sec: float
     video_source: str
-    snapshot_path: str = ""
-    # "auto" = 긴급 연속 판정, "escalation" = 구역 내 인원이 직전 발송보다 늘어남.
-    # 필드명을 trigger 로 두면 안 된다 — EventStore 가 키를 그대로 컬럼명에 쓰는데
-    # TRIGGER 는 SQLite 예약어라 INSERT 구문이 깨진다.
-    trigger_kind: str = "auto"
-    # 발송 시 Storage 에 올라간 스냅샷의 서명 URL. 폰이 받은 것과 같은 값이다.
+    snapshot_path: str = ""          # ⭐️ 추가: 로컬 스냅샷 이미지 파일 경로
+    trigger_kind: str = "auto"      # "auto" = 연속 긴급 판정, "escalation" = 인원 증가
+    notify_status: str = "ui-demo"  # 발송 기능이 빠져 있으므로 항상 이 값
     image_url: str = ""
     event_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
-    occurred_at: str = field(default_factory=lambda: datetime.now().astimezone().isoformat(timespec="seconds"))
+    occurred_at: str = field(
+        default_factory=lambda: datetime.now().astimezone().isoformat(timespec="seconds")
+    )
     note: str = SAFETY_NOTE
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     def summary_text(self) -> str:
-        """텔레그램 메시지 기본 문안. 알림 파트에서 자유롭게 교체해도 된다."""
+        """콘솔 출력 및 알림 기본 텍스트 포맷."""
         return (
-            f"[{RISK_LABEL[self.risk_level]}] 이안류 구역 내 인원 {self.persons_in_rip}명 감지\n"
+            f"[{RISK_LABEL.get(self.risk_level, self.risk_level)}] 이안류 구역 내 인원 {self.persons_in_rip}명 감지\n"
             f"발생 시각: {self.occurred_at}\n"
             f"영상 위치: {self.timestamp_sec:.1f}초 (프레임 {self.frame_idx})\n"
             f"화면 전체 인원: {self.total_persons}명 / 의심 구역 {self.rip_count}개\n"

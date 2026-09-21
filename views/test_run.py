@@ -98,6 +98,8 @@ def _analyze(viewer, panel, video_path: Path, detector, store: EventStore, setti
         max_frames=settings["max_frames"],
         min_consecutive=settings["min_consecutive"],
         cooldown_sec=settings["cooldown_sec"],
+        smooth_window=settings["smooth_window"],
+        show_foot=settings.get("dev_mode", False),
     )
 
     with viewer:
