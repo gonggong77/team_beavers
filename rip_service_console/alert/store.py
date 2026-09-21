@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS events (
     notify_status TEXT DEFAULT 'pending',
     notify_detail TEXT DEFAULT '',
     trigger_kind  TEXT DEFAULT 'auto',
-    image_url     TEXT DEFAULT ''
+    image_url     TEXT DEFAULT '',
+    handled       INTEGER DEFAULT 0
 );
 """
 
@@ -42,6 +43,7 @@ CREATE TABLE IF NOT EXISTS events (
 _MIGRATION_COLUMNS = (
     ("trigger_kind", "TEXT DEFAULT 'auto'"),
     ("image_url", "TEXT DEFAULT ''"),
+    ("handled", "INTEGER DEFAULT 0"),
 )
 
 
@@ -82,6 +84,11 @@ class EventStore:
                 "UPDATE events SET notify_status = ?, notify_detail = ? WHERE event_id = ?",
                 (status, detail, event_id),
             )
+
+    def mark_handled(self, event_id: str) -> None:
+        """관리자가 확인 처리한 이벤트를 표시한다."""
+        with self._connect() as conn:
+            conn.execute("UPDATE events SET handled = 1 WHERE event_id = ?", (event_id,))
 
     def list_events(self, limit: int = 500) -> list[dict]:
         with self._connect() as conn:

@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import streamlit as st
-from core.schemas import SAFETY_NOTE
 from views import video_analysis
 
 st.set_page_config(
@@ -31,12 +30,6 @@ SURVEILLANCE_CONFIG = {
 _HEADER_CSS = """
 <style>
 header[data-testid="stHeader"] { background: transparent; }
-div[data-testid="stSidebarCollapsedControl"],
-div[data-testid="collapsedControl"],
-button[data-testid="stSidebarCollapseButton"],
-div[data-testid="stSidebarCollapseButton"] {
-    display: none !important; visibility: hidden !important;
-}
 div[data-testid="stMainBlockContainer"] { padding-top: 4.7rem; padding-bottom: 1rem; }
 div[data-testid="stSidebarUserContent"] { padding-top: 0.0rem; }
 section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] { gap: .5rem; }
@@ -44,6 +37,7 @@ section[data-testid="stSidebar"] hr { margin: .6rem 0; }
 div[data-testid="stMainBlockContainer"] div[data-testid="stVerticalBlock"] { gap: 0; }
 div[data-testid="stMainBlockContainer"] h4 { margin: 0 0 .25rem 0; padding: 0; }
 div[data-testid="stImage"] img { width: 100%; height: auto; display: block; border-radius: 0; }
+div[data-testid="stHorizontalBlock"] { align-items: flex-start; }
 </style>
 """
 
@@ -61,12 +55,9 @@ def main() -> None:
 
 def sidebar() -> tuple[any, bool]:
     st.sidebar.markdown(
-        "<div style='font-size:1.05rem;font-weight:700;line-height:1.35'>"
-        "🌊 이안류 조난자 AI 관제 시스템</div>"
-        "<div style='font-size:.78rem;opacity:.6;margin-bottom:12px'>YOLO11m + SAHI 듀얼 엔진 가동</div>",
+        "<div style='font-size:.82rem;opacity:.6;margin-bottom:2px'>YOLO11m + SAHI 듀얼 엔진 가동</div>",
         unsafe_allow_html=True,
     )
-
     st.sidebar.caption("⚡ 실시간 정밀 파이프라인 (Conf 0.05 / Frame Skip 2)")
 
     uploaded = st.sidebar.file_uploader(
@@ -83,9 +74,6 @@ def sidebar() -> tuple[any, bool]:
         use_container_width=True,
     )
 
-    if st.sidebar.button("📋 실시간 로그 확인하기", use_container_width=True):
-        video_analysis.show_log_dialog()
-
     st.sidebar.markdown(
         "<div style='font-size:.82rem;line-height:1.6;color:#888'>"
         "• <b>이안류 판별:</b> YOLO11m (Conf 0.25)<br>"
@@ -93,11 +81,6 @@ def sidebar() -> tuple[any, bool]:
         "• <b>분석 간격:</b> 2 프레임 (가속 파이프라인)<br>"
         "• <b>판정 기준:</b> 수면 접점 Point-in-Polygon"
         "</div>",
-        unsafe_allow_html=True,
-    )
-
-    st.sidebar.markdown(
-        f"<div style='margin-top:16px;font-size:.8rem;color:#808495'>{SAFETY_NOTE}</div>",
         unsafe_allow_html=True,
     )
 

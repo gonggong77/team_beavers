@@ -84,7 +84,7 @@ def top_bar_html(risk: RiskLevel, result: FrameResult, clock: str) -> str:
     """영상 위에 붙는 한글 상태 요약 바."""
     color = RISK_HEX[risk]
     return (
-        f"<div style='background:{color};color:#fff;border-radius:5px 5px 0 0;"
+        f"<div style='background:{color};color:#fff;margin-top:10px;border-radius:5px 5px 0 0;"
         f"padding:13px 18px 28px;font-size:1rem;font-weight:800'>"
         f"{RISK_LABEL[risk]} | 구역 내 인원 {result.persons_in_rip}"
         f" | 화면 전체 인원 {result.total_persons}"
@@ -99,7 +99,7 @@ IDLE_TEXT_HEX = "#31333f"
 def idle_top_bar_html(text: str) -> str:
     """대기/준비 상태에서 쓰는 중립색 상단 바 (분석중 상단 바와 동일 구조)."""
     return (
-        f"<div style='background:{IDLE_HEX};color:{IDLE_TEXT_HEX};border-radius:5px 5px 0 0;"
+        f"<div style='background:{IDLE_HEX};color:{IDLE_TEXT_HEX};margin-top:10px;border-radius:5px 5px 0 0;"
         f"padding:13px 18px 28px;font-size:1rem;font-weight:800'>{text}</div>"
     )
 
@@ -107,7 +107,7 @@ def idle_top_bar_html(text: str) -> str:
 def idle_bottom_panel_html(zone: str, camera: str, text: str, guide: str) -> str:
     """대기/준비 상태에서 쓰는 중립색 하단 패널 (분석중 하단 패널과 동일 구조)."""
     return (
-        f"<div style='background:{IDLE_HEX};color:{IDLE_TEXT_HEX};border-radius:0 0 5px 5px;"
+        f"<div style='background:{IDLE_HEX};color:{IDLE_TEXT_HEX};margin-bottom:10px;border-radius:0 0 5px 5px;"
         f"padding:16px;text-align:center;margin-bottom:12px'>"
         f"<div style='font-size:.95rem;font-weight:700;opacity:.95'>{zone} | {camera}</div>"
         f"<div style='font-size:2.6rem;font-weight:900;line-height:1.2;margin:2px 0 6px'>"

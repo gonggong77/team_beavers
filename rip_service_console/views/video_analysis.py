@@ -9,7 +9,9 @@ from pathlib import Path
 import cv2
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
+from alert.store import EventStore
 from core.pipeline import run_pipeline
 from core.render import (
     bottom_panel_html,
@@ -34,6 +36,14 @@ MAX_GALLERY = 12
 
 ZONE_LABEL = "가상 관측 구역 A-1"
 CAMERA_ID = "CCTV-A01"
+
+# 좌측 사이드바 상태별 [가운데, 오른쪽] 컬럼 비율. 원하는 값으로 직접 수정.
+SIDEBAR_EXPANDED_RATIO = (2.3, 1)
+SIDEBAR_COLLAPSED_RATIO = (3, 1)
+
+# 좌측 사이드바 상태별 우측 캡처 갤러리 높이(px). 원하는 값으로 직접 수정.
+GALLERY_HEIGHT_EXPANDED = 560
+GALLERY_HEIGHT_COLLAPSED = 700
 
 
 def save_upload(uploaded) -> Path:
@@ -76,25 +86,51 @@ def render(uploaded, settings: dict, start_clicked: bool = False) -> None:
         st.session_state["run_analysis"] = True
         st.session_state["snapshots"] = []  # 캡처 갤러리 초기화
         st.session_state["events"] = []     # 이벤트 로그 초기화
+        st.session_state["last_frame"] = None
+        _collapse_sidebar()
 
     st.session_state.setdefault("events", [])
     st.session_state.setdefault("snapshots", [])
 
     is_running = st.session_state.get("run_analysis", False)
+    last_frame = st.session_state.get("last_frame")
 
-    viewer, panel = st.columns([2.1, 1], gap="medium")
+    _apply_collapsed_sidebar_ratio()
+
+    viewer, panel = st.columns(list(SIDEBAR_EXPANDED_RATIO), gap="medium")
 
     with panel:
+        st.markdown("<div style='height:50px'></div>", unsafe_allow_html=True)
+        if st.button("📋 실시간 로그 확인하기", use_container_width=True, disabled=is_running):
+            show_log_dialog()
         st.markdown(
-            "<div style='font-size:1.15rem;font-weight:700;margin-top:-5px;margin-bottom:20px'>"
+            "<div style='font-size:1.15rem;font-weight:700;margin-top:20px;margin-bottom:20px'>"
             "🚨 긴급 경보 발생 순간 캡처</div>",
             unsafe_allow_html=True,
         )
         gallery_slot = st.empty()
-    _gallery(gallery_slot)
+    _gallery(gallery_slot, interactive=not is_running)
+
+    with viewer:
+        st.markdown(
+            "<div style='font-size:2.5rem;font-weight:700;line-height:1.3;margin-top:-30px;margin-bottom:20px'>"
+            "🌊 이안류 조난자 AI 관제 시스템</div>",
+            unsafe_allow_html=True,
+        )
 
     if is_running:
         _play(viewer, gallery_slot, video_path, source_name, settings)
+    elif last_frame is not None:
+        with viewer:
+            st.markdown(idle_top_bar_html("분석 완료"), unsafe_allow_html=True)
+            st.image(last_frame, use_container_width=True)
+            st.markdown(
+                idle_bottom_panel_html(
+                    ZONE_LABEL, CAMERA_ID, "분석 완료",
+                    "우측 캡처를 확인 처리하면 목록에서 사라집니다.",
+                ),
+                unsafe_allow_html=True,
+            )
     else:
         with viewer:
             st.markdown(idle_top_bar_html("분석 대기중입니다"), unsafe_allow_html=True)
@@ -111,6 +147,55 @@ def render(uploaded, settings: dict, start_clicked: bool = False) -> None:
                 ),
                 unsafe_allow_html=True,
             )
+
+
+def _apply_collapsed_sidebar_ratio() -> None:
+    """좌측 사이드바가 접혀 있는 동안 가운데/오른쪽 컬럼 비율과 갤러리 높이를 덮어쓴다.
+
+    st.columns 로 준 비율/갤러리 높이는 사이드바를 펼친 상태 기준이다. Streamlit 은
+    접힘 상태를 서버로 알려주지 않아 Python 조건문으로 분기할 수 없으므로, 사이드바에
+    붙는 aria-expanded 속성을 :has() 로 잡아 CSS 로만 값을 바꾼다.
+    """
+    left, right = SIDEBAR_COLLAPSED_RATIO
+    st.markdown(
+        f"""<style>
+        body:has(section[data-testid="stSidebar"][aria-expanded="false"])
+        div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-child(1) {{
+            flex: {left} 1 0% !important; width: auto !important;
+        }}
+        body:has(section[data-testid="stSidebar"][aria-expanded="false"])
+        div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"]:nth-child(2) {{
+            flex: {right} 1 0% !important; width: auto !important;
+        }}
+        body:has(section[data-testid="stSidebar"][aria-expanded="false"])
+        div[data-testid="stVerticalBlock"][style*="{GALLERY_HEIGHT_EXPANDED}px"] {{
+            height: {GALLERY_HEIGHT_COLLAPSED}px !important;
+        }}
+        </style>""",
+        unsafe_allow_html=True,
+    )
+
+
+def _collapse_sidebar() -> None:
+    """분석 시작 시 좌측 사이드바를 한 번 접는다.
+
+    set_page_config(initial_sidebar_state) 는 브라우저 localStorage 값에 밀리므로
+    사용자가 직접 누르는 것과 같은 경로인 접기 버튼 클릭을 주입한다.
+    nonce 는 iframe 이 매번 다시 마운트되어 스크립트가 재실행되게 한다.
+    """
+    nonce = st.session_state.get("collapse_nonce", 0) + 1
+    st.session_state["collapse_nonce"] = nonce
+    components.html(
+        f"""<script>
+        /* {nonce} */
+        const doc = window.parent.document;
+        const sidebar = doc.querySelector('[data-testid="stSidebar"]');
+        if (sidebar && sidebar.getAttribute('aria-expanded') === 'true') {{
+            doc.querySelector('[data-testid="stSidebarCollapseButton"] button')?.click();
+        }}
+        </script>""",
+        height=0,
+    )
 
 
 
@@ -142,6 +227,7 @@ def _play(viewer, gallery_slot, video_path: Path, source_name: str, settings: di
         progress = st.progress(0.0)
 
     alerts = 0
+    last_rgb = None
 
     for step in run_pipeline(
         video_path=video_path,
@@ -154,6 +240,7 @@ def _play(viewer, gallery_slot, video_path: Path, source_name: str, settings: di
         swimmer_conf=settings.get("swimmer_conf", 0.05),
     ):
         rgb = cv2.cvtColor(step.annotated_bgr, cv2.COLOR_BGR2RGB)
+        last_rgb = rgb
 
         top_slot.markdown(
             top_bar_html(step.risk, step.result, datetime.now().strftime("%H:%M:%S")),
@@ -173,10 +260,14 @@ def _play(viewer, gallery_slot, video_path: Path, source_name: str, settings: di
         if step.event:
             alerts += 1
             event = step.event
-            st.session_state["events"].insert(0, event.to_dict())
+            st.session_state["events"].insert(0, {**event.to_dict(), "handled": False})
             st.session_state["snapshots"].insert(
                 0,
-                (rgb, f"구역 내 {event.persons_in_rip}명 감지 · {event.occurred_at}"),
+                {
+                    "event_id": event.event_id,
+                    "image": rgb,
+                    "caption": f"구역 내 {event.persons_in_rip}명 감지 · {event.occurred_at}",
+                },
             )
             del st.session_state["snapshots"][MAX_GALLERY:]
             _gallery(gallery_slot)
@@ -188,19 +279,43 @@ def _play(viewer, gallery_slot, video_path: Path, source_name: str, settings: di
         unsafe_allow_html=True,
     )
 
+    st.session_state["last_frame"] = last_rgb
     st.session_state["run_analysis"] = False
+    st.rerun()
 
 
-def _gallery(slot) -> None:
-    """우측 캡처 목록 (스크롤 영역)."""
+def _gallery(slot, interactive: bool = False) -> None:
+    """우측 캡처 목록 (스크롤 영역).
+
+    분석 루프 중에는 위젯을 만들지 않는다. 위젯 key 중복 검사가 스크립트 런 단위라
+    루프가 갤러리를 다시 그릴 때 중복 키 오류가 나고, 클릭 시 분석도 중단되기 때문이다.
+    """
     snapshots = st.session_state.get("snapshots", [])
-    with slot.container(height=650):
+    with slot.container(height=GALLERY_HEIGHT_EXPANDED):
         if not snapshots:
             st.caption("아직 감지된 긴급 경보가 없습니다.")
             return
-        for image, caption in snapshots:
-            st.image(image, use_container_width=True)
-            st.caption(caption)
+        for snapshot in snapshots:
+            st.image(snapshot["image"], use_container_width=True)
+            st.caption(snapshot["caption"])
+            if interactive:
+                st.checkbox(
+                    "✅ 확인 완료",
+                    key=f"ack_{snapshot['event_id']}",
+                    on_change=_ack,
+                    args=(snapshot["event_id"],),
+                )
+
+
+def _ack(event_id: str) -> None:
+    """관리자 확인 처리: DB에 기록하고 우측 목록에서 제거한다."""
+    EventStore().mark_handled(event_id)
+    st.session_state["snapshots"] = [
+        s for s in st.session_state.get("snapshots", []) if s["event_id"] != event_id
+    ]
+    for e in st.session_state.get("events", []):
+        if e["event_id"] == event_id:
+            e["handled"] = True
 
 
 @st.dialog("📋 실시간 탐지 이벤트 로그", width="large")
@@ -216,14 +331,16 @@ def _event_log(dev: bool = False) -> None:
 
     frame = pd.DataFrame(events)[
         ["occurred_at", "risk_level", "persons_in_rip", "total_persons",
-         "rip_count", "timestamp_sec", "video_source", "trigger_kind", "notify_status"]
+         "rip_count", "timestamp_sec", "video_source", "trigger_kind", "notify_status", "handled"]
     ].rename(columns={
         "occurred_at": "발생 시각", "risk_level": "위험 등급", "persons_in_rip": "구역 내 인원",
         "total_persons": "전체 인원", "rip_count": "이안류 수", "timestamp_sec": "영상 위치(초)",
         "video_source": "분석 영상", "trigger_kind": "경보 사유", "notify_status": "발송 상태",
+        "handled": "확인 처리",
     })
     frame["경보 사유"] = frame["경보 사유"].map(TRIGGER_LABEL).fillna(frame["경보 사유"])
     frame["위험 등급"] = frame["위험 등급"].map(RISK_LABEL).fillna(frame["위험 등급"])
+    frame["확인 처리"] = frame["확인 처리"].map({True: "✅ 처리됨", False: "대기중"})
     st.dataframe(frame, use_container_width=True, hide_index=True)
 
     if not dev:

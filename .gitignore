@@ -16,3 +16,4 @@ rip_service_console/alert/serviceAccountKey.json
 rip_service_console/*.pt
 rip_service_console/data/events.db
 rip_service_console/static/snapshots/
+프론트엔트_히스토리.md
