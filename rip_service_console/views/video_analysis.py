@@ -237,7 +237,7 @@ def _play(viewer, gallery_slot, video_path: Path, source_name: str, settings: di
         source_name=source_name,
         rip_model_path=settings.get("rip_model_path", "best_yolo11m_integrated_v2_first.pt"),
         swimmer_model_path=settings.get("swimmer_model_path", "best_swimmer_yolo11m_b8.pt"),
-        swimmer_conf=settings.get("swimmer_conf", 0.05),
+        swimmer_conf=settings.get("swimmer_conf", 0.10),
     ):
         rgb = cv2.cvtColor(step.annotated_bgr, cv2.COLOR_BGR2RGB)
         last_rgb = rgb

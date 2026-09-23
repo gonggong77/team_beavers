@@ -53,7 +53,7 @@ class SurveillanceInferenceEngine:
         self,
         rip_model_path: str = DEFAULT_RIP_MODEL,
         swimmer_model_path: str = DEFAULT_SWIMMER_MODEL,
-        swimmer_conf: float = 0.05,
+        swimmer_conf: float = 0.10,
     ):
         self.device = "cuda:0" if torch.cuda.is_available() else "cpu"
         self.rip_model = YOLO(rip_model_path)
@@ -104,7 +104,7 @@ def run_pipeline(
     source_name: str = "",
     rip_model_path: str = DEFAULT_RIP_MODEL,
     swimmer_model_path: str = DEFAULT_SWIMMER_MODEL,
-    swimmer_conf: float = 0.05,
+    swimmer_conf: float = 0.10,
 ) -> Iterator[DemoStep]:
     """실시간 비디오 분석 및 모바일 발송 파이프라인 제너레이터."""
     source = source_name or video_path.name
@@ -150,8 +150,8 @@ def run_pipeline(
                         rip_res = engine.rip_model(
                             frame,
                             imgsz=640,
-                            conf=0.20,
-                            iou=0.55,
+                            conf=0.25,
+                            iou=0.70,
                             device=engine.device,
                             verbose=False,
                             half=True if "cuda" in engine.device else False,
@@ -166,7 +166,7 @@ def run_pipeline(
                     cached_rips = new_rips
 
                 # -------------------------------------------------------------
-                # 3. 수영객 SAHI 추론 (원본 해상도 768px 타일링, conf=0.05)
+                # 3. 수영객 SAHI 추론 (원본 해상도 768px 타일링, conf=0.10 / iou=0.45)
                 # -------------------------------------------------------------
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 with torch.inference_mode():
@@ -178,6 +178,8 @@ def run_pipeline(
                         overlap_height_ratio=0.18,
                         overlap_width_ratio=0.18,
                         perform_standard_pred=False,
+                        postprocess_match_metric="IOU",
+                        postprocess_match_threshold=0.45,
                         verbose=0,
                     )
 
